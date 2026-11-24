@@ -1,0 +1,41 @@
+# --- Secretos y configuración local ---
+# El Makefile carga .env al ejecutar `make run`. Nunca se versiona.
+.env
+.env.*
+!.env.example
+
+# --- Artefactos de compilación de Go ---
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+mar-api
+
+# --- Cobertura y salidas de pruebas ---
+*.out
+coverage.*
+*.test
+
+# --- Registros y temporales ---
+*.log
+/tmp/
+*.tmp
+
+# --- Editores e IDE ---
+.idea/
+*.swp
+
+# --- Sistema operativo ---
+.DS_Store
+Thumbs.db
+
+# --- Worker Python (workers/media) ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
