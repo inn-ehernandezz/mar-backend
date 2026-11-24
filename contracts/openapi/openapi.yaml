@@ -1,0 +1,191 @@
+openapi: 3.1.0
+
+info:
+  title: MAR API
+  version: 0.1.0
+  description: |
+    API del motor backend multimodal de MAR: ingesta de recursos, gestión de
+    trabajos asíncronos y consulta con Agentic RAG.
+
+    **Estado de implementación.** Las rutas marcadas con `501` están declaradas
+    pero su caso de uso aún no existe: responden `501 Not Implemented` con el
+    esquema de error común. Nunca se devuelven datos ficticios.
+
+    **Convenciones transversales.** JSON; `X-Request-ID` opcional en la entrada
+    y siempre presente en la salida; `X-Tenant-ID` obligatorio en `/v1`.
+
+servers:
+  - url: http://localhost:8080
+    description: Entorno de desarrollo local
+
+tags:
+  - name: health
+  - name: resources
+  - name: jobs
+  - name: search
+  - name: queries
+
+paths:
+  /health/live:
+    get:
+      tags: [health]
+      summary: Sonda de vida del proceso
+      operationId: getLiveness
+      responses:
+        "200":
+          description: El proceso está vivo
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+
+  /health/ready:
+    get:
+      tags: [health]
+      summary: Sonda de disponibilidad con checks registrados
+      operationId: getReadiness
+      responses:
+        "200":
+          description: El servicio está listo para atender tráfico
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthReport"
+        "503":
+          description: Alguna comprobación ha fallado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthReport"
+
+  /v1/resources:
+    post:
+      tags: [resources]
+      summary: Subida de un recurso y creación del trabajo de ingesta
+      operationId: createResource
+      description: Pendiente de implementación (Fase 3).
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /v1/resources/{id}:
+    get:
+      tags: [resources]
+      summary: Consulta de metadatos de un recurso
+      operationId: getResource
+      description: Pendiente de implementación (Fase 3).
+      parameters:
+        - $ref: "#/components/parameters/PathID"
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /v1/jobs/{id}:
+    get:
+      tags: [jobs]
+      summary: Estado, progreso y errores de un trabajo
+      operationId: getJob
+      description: Pendiente de implementación (Fase 2/3).
+      parameters:
+        - $ref: "#/components/parameters/PathID"
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /v1/jobs/{id}/cancel:
+    post:
+      tags: [jobs]
+      summary: Cancelación de un trabajo
+      operationId: cancelJob
+      description: Pendiente de implementación (Fase 3).
+      parameters:
+        - $ref: "#/components/parameters/PathID"
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /v1/search:
+    post:
+      tags: [search]
+      summary: Búsqueda semántica directa, sin agente
+      operationId: search
+      description: Pendiente de implementación (Fase 4).
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /v1/queries:
+    post:
+      tags: [queries]
+      summary: Consulta con Agentic RAG
+      operationId: query
+      description: Pendiente de implementación (Fase 5).
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+components:
+  parameters:
+    PathID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TenantID:
+      name: X-Tenant-ID
+      in: header
+      required: true
+      schema:
+        type: string
+
+  responses:
+    NotImplemented:
+      description: La operación está declarada pero aún no implementada
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: not_implemented
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+        request_id:
+          type: string
+
+    HealthReport:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            required: [status]
+            properties:
+              status:
+                type: string
+                enum: [ok, degraded]
+              latency_ms:
+                type: integer
+              error:
+                type: string

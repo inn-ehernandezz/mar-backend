@@ -1,0 +1,114 @@
+name: mar-backend
+
+# Entorno de desarrollo local de MAR. Comprende las tres dependencias de
+# persistencia de la Fase 2 y, opcionalmente, el propio backend Go.
+#
+# Dos flujos de trabajo válidos:
+#
+#   1. `make up` + `make run`: infraestructura en contenedores (Qdrant y
+#      Azurite) y el binario Go en el host. Es el bucle de desarrollo rápido.
+#   2. `docker compose --profile app up -d`: pila completa, incluido el backend
+#      Go, comunicándose por la red interna `mar` (nombres de servicio, no
+#      localhost).
+#
+# Qdrant 1.20.x es compatible con el cliente Go `qdrant/go-client v1.20.2`
+# (misma versión menor). Azurite emula Blob, Queue y Table Storage.
+
+# Credenciales públicas del emulador Azurite. No son secretos y no deben usarse
+# fuera del entorno local.
+x-azurite-account-name: &azurite-account-name devstoreaccount1
+x-azurite-account-key: &azurite-account-key Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.20.2
+    restart: unless-stopped
+    ports:
+      - "6333:6333" # REST / Dashboard
+      - "6334:6334" # gRPC (usado por el cliente Go)
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      # La imagen no incluye curl; se comprueba el puerto REST con bash.
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [mar]
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.37.0
+    restart: unless-stopped
+    # --skipApiVersionCheck es necesario porque el SDK de Azure para Go usa una
+    # versión de API (x-ms-version) más reciente que la que reconoce este
+    # Azurite. Solo afecta al emulador local.
+    command: azurite --skipApiVersionCheck --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0
+    ports:
+      - "10000:10000" # Blob
+      - "10001:10001" # Queue
+      - "10002:10002" # Table
+    # Los datos del emulador son desechables: no se persisten.
+    healthcheck:
+      # La imagen incluye Node; se comprueba el puerto de Blob sin depender de
+      # herramientas externas.
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('net').connect(10000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [mar]
+
+  # Backend Go. Se levanta con `docker compose --profile app up -d`; no forma
+  # parte del perfil por defecto para no interferir con `make run`.
+  api:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: deploy/docker/api.Dockerfile
+    image: mar-backend/api:dev
+    restart: unless-stopped
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      azurite:
+        condition: service_healthy
+    environment:
+      MAR_ENV: development
+      MAR_LOG_LEVEL: info
+      MAR_LOG_FORMAT: json
+      MAR_HTTP_ADDR: 0.0.0.0:8080
+      MAR_TENANT_REQUIRE_HEADER: "true"
+      # Dentro de la red de Compose se usan los nombres de servicio.
+      MAR_QDRANT_URL: http://qdrant:6334
+      MAR_QDRANT_TEXT_COLLECTION: text_embeddings
+      MAR_QDRANT_VISUAL_COLLECTION: visual_embeddings
+      MAR_QDRANT_TEXT_VECTOR_SIZE: "1024"
+      MAR_BLOB_ENDPOINT: http://azurite:10000/devstoreaccount1
+      MAR_BLOB_ACCOUNT_NAME: *azurite-account-name
+      MAR_BLOB_ACCOUNT_KEY: *azurite-account-key
+      MAR_TABLE_ENDPOINT: http://azurite:10002/devstoreaccount1
+      MAR_TABLE_ACCOUNT_NAME: *azurite-account-name
+      MAR_TABLE_ACCOUNT_KEY: *azurite-account-key
+      MAR_TABLE_RESOURCES: resources
+      MAR_TABLE_JOBS: jobs
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/health/live >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [mar]
+
+volumes:
+  qdrant-data:
+
+networks:
+  mar:
+    driver: bridge
