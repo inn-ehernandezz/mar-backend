@@ -8,6 +8,7 @@ import (
 
 	"mar-backend/internal/platform/config"
 	"mar-backend/internal/platform/health"
+	"mar-backend/internal/platform/persistence"
 	"mar-backend/internal/storage"
 	"mar-backend/internal/storage/blob"
 	"mar-backend/internal/storage/qdrant"
@@ -30,28 +31,9 @@ type dependencies struct {
 // indisponibilidad de un servicio remoto no impide arrancar, porque los
 // clientes son perezosos y el estado se refleja en /health/ready.
 func buildDependencies(cfg config.Config, checks *health.Registry) (*dependencies, error) {
-	blobStore, err := blob.New(blob.Config{
-		ConnectionString: cfg.Blob.ConnectionString,
-		Endpoint:         cfg.Blob.Endpoint,
-		AccountName:      cfg.Blob.AccountName,
-		AccountKey:       cfg.Blob.AccountKey,
-		RequestTimeout:   cfg.Blob.RequestTimeout,
-	})
+	blobStore, tableStore, err := persistence.New(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("almacenamiento de objetos: %w", err)
-	}
-
-	tableStore, err := table.New(table.Config{
-		ConnectionString: cfg.Table.ConnectionString,
-		Endpoint:         cfg.Table.Endpoint,
-		AccountName:      cfg.Table.AccountName,
-		AccountKey:       cfg.Table.AccountKey,
-		TableResources:   cfg.Table.TableResources,
-		TableJobs:        cfg.Table.TableJobs,
-		RequestTimeout:   cfg.Table.RequestTimeout,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("almacenamiento tabular: %w", err)
+		return nil, err
 	}
 
 	vectorStore, err := qdrant.New(qdrant.Config{

@@ -367,8 +367,7 @@ type JobRepository struct {
 
 var _ storage.JobRepository = (*JobRepository)(nil)
 
-// jobEntity es la representación persistida de un trabajo. Los campos de tipo
-// outbox (patrón outbox, ADR 0006) se añadirán en la Fase 3.
+// jobEntity es la representación persistida de un trabajo.
 type jobEntity struct {
 	PartitionKey  string `json:"PartitionKey"`
 	RowKey        string `json:"RowKey"`
@@ -379,6 +378,12 @@ type jobEntity struct {
 	Status        string `json:"Status"`
 	Progress      int32  `json:"Progress"`
 	Attempts      int32  `json:"Attempts"`
+	Stage         string `json:"Stage"`
+	Pipeline      string `json:"Pipeline"`
+	LeaseUntil    string `json:"LeaseUntil"`
+	DispatchID    string `json:"DispatchID"`
+	DispatchAt    string `json:"DispatchAt"`
+	RequestID     string `json:"RequestID"`
 	ErrorCode     string `json:"ErrorCode"`
 	ErrorMessage  string `json:"ErrorMessage"`
 	CreatedAt     string `json:"CreatedAt"`
@@ -498,7 +503,9 @@ func (r *JobRepository) List(ctx context.Context, q storage.JobQuery) (storage.J
 		return storage.JobPage{}, fmt.Errorf("%w: tenant_id obligatorio", storage.ErrInvalidArgument)
 	}
 
-	conditions := []string{fmt.Sprintf("PartitionKey eq '%s'", escapeOData(q.TenantID))}
+	filter := fmt.Sprintf("PartitionKey eq '%s'", escapeOData(q.TenantID))
+	conditions := []string{filter, "JobType ne ''"}
+
 	if q.ResourceID != "" {
 		conditions = append(conditions, fmt.Sprintf("ResourceID eq '%s'", escapeOData(q.ResourceID)))
 	}
@@ -510,7 +517,7 @@ func (r *JobRepository) List(ctx context.Context, q storage.JobQuery) (storage.J
 	if limit <= 0 {
 		limit = defaultPageLimit
 	}
-	filter := strings.Join(conditions, " and ")
+	filter = strings.Join(conditions, " and ")
 	opts := &aztables.ListEntitiesOptions{Filter: &filter, Top: ptr(limit)}
 	applyContinuation(opts, q.Continuation)
 
@@ -527,6 +534,9 @@ func (r *JobRepository) List(ctx context.Context, q storage.JobQuery) (storage.J
 		job, err := fromJobEntityBytes(raw)
 		if err != nil {
 			return storage.JobPage{}, err
+		}
+		if job.JobID == "" {
+			continue // outbox rows have no JobID
 		}
 		items = append(items, job)
 	}
@@ -548,6 +558,12 @@ func toJobEntity(job storage.Job) jobEntity {
 		Status:        string(job.Status),
 		Progress:      job.Progress,
 		Attempts:      job.Attempts,
+		Stage:         job.Stage,
+		Pipeline:      job.Pipeline,
+		LeaseUntil:    formatSortableTime(job.LeaseUntil),
+		DispatchID:    job.DispatchID,
+		DispatchAt:    formatSortableTime(job.DispatchAt),
+		RequestID:     job.RequestID,
 		ErrorCode:     job.ErrorCode,
 		ErrorMessage:  job.ErrorMessage,
 		CreatedAt:     formatTime(job.CreatedAt),
@@ -581,6 +597,16 @@ func fromJobEntityBytes(raw []byte) (storage.Job, error) {
 		return storage.Job{}, fmt.Errorf("table: completed_at inválido en trabajo %s: %w", e.JobID, err)
 	}
 
+	leaseUntil, err := parseTimePtr(e.LeaseUntil)
+	if err != nil {
+		return storage.Job{}, fmt.Errorf("table: lease inválido: %w", err)
+	}
+
+	dispatchAt, err := parseTimePtr(e.DispatchAt)
+	if err != nil {
+		return storage.Job{}, fmt.Errorf("table: dispatch inválido: %w", err)
+	}
+
 	return storage.Job{
 		TenantID:      e.TenantID,
 		JobID:         e.JobID,
@@ -589,6 +615,12 @@ func fromJobEntityBytes(raw []byte) (storage.Job, error) {
 		Status:        storage.JobStatus(e.Status),
 		Progress:      e.Progress,
 		Attempts:      e.Attempts,
+		Stage:         e.Stage,
+		Pipeline:      e.Pipeline,
+		LeaseUntil:    leaseUntil,
+		DispatchID:    e.DispatchID,
+		DispatchAt:    dispatchAt,
+		RequestID:     e.RequestID,
 		ErrorCode:     e.ErrorCode,
 		ErrorMessage:  e.ErrorMessage,
 		CreatedAt:     createdAt,

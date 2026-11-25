@@ -68,46 +68,98 @@ paths:
       tags: [resources]
       summary: Subida de un recurso y creación del trabajo de ingesta
       operationId: createResource
-      description: Pendiente de implementación (Fase 3).
+      description: Guarda el original y añade el trabajo y su mensaje al outbox en una transacción.
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - in: header
+          name: Idempotency-Key
+          description: Reutilizar dentro del mismo tenant para reintentar la misma subida. Se genera si falta.
+          schema:
+            type: string
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              additionalProperties: false
+              properties:
+                file:
+                  type: string
+                  format: binary
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "202":
+          description: Original almacenado y trabajo aceptado
+          headers:
+            Location:
+              schema: {type: string}
+              description: Ruta de consulta del trabajo
+            Idempotency-Key:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [resource_id, job_id, status]
+                properties:
+                  resource_id: {type: string, format: uuid}
+                  job_id: {type: string, format: uuid}
+                  status: {$ref: "#/components/schemas/JobStatus"}
+        "400": {$ref: "#/components/responses/InvalidArgument"}
+        "401": {$ref: "#/components/responses/TenantRequired"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "413": {$ref: "#/components/responses/TooLarge"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "503": {$ref: "#/components/responses/StorageUnavailable"}
 
   /v1/resources/{id}:
     get:
       tags: [resources]
       summary: Consulta de metadatos de un recurso
       operationId: getResource
-      description: Pendiente de implementación (Fase 3).
       parameters:
+        - $ref: "#/components/parameters/TenantID"
         - $ref: "#/components/parameters/PathID"
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "200":
+          description: Metadatos del recurso
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Resource"}
+        "400": {$ref: "#/components/responses/InvalidArgument"}
+        "401": {$ref: "#/components/responses/TenantRequired"}
+        "404": {$ref: "#/components/responses/NotFound"}
 
   /v1/jobs/{id}:
     get:
       tags: [jobs]
       summary: Estado, progreso y errores de un trabajo
       operationId: getJob
-      description: Pendiente de implementación (Fase 2/3).
       parameters:
+        - $ref: "#/components/parameters/TenantID"
         - $ref: "#/components/parameters/PathID"
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "200": {$ref: "#/components/responses/Job"}
+        "400": {$ref: "#/components/responses/InvalidArgument"}
+        "401": {$ref: "#/components/responses/TenantRequired"}
+        "404": {$ref: "#/components/responses/NotFound"}
 
   /v1/jobs/{id}/cancel:
     post:
       tags: [jobs]
       summary: Cancelación de un trabajo
       operationId: cancelJob
-      description: Pendiente de implementación (Fase 3).
       parameters:
+        - $ref: "#/components/parameters/TenantID"
         - $ref: "#/components/parameters/PathID"
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "200": {$ref: "#/components/responses/Job"}
+        "400": {$ref: "#/components/responses/InvalidArgument"}
+        "401": {$ref: "#/components/responses/TenantRequired"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
 
   /v1/search:
     post:
@@ -146,6 +198,46 @@ components:
         type: string
 
   responses:
+    Job:
+      description: Estado del trabajo
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Job"}
+    InvalidArgument:
+      description: Parámetros o archivo no válidos
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    TenantRequired:
+      description: Falta la cabecera X-Tenant-ID
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    NotFound:
+      description: El identificador no existe en el tenant
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Conflict:
+      description: Clave reutilizada con otro archivo o estado no cancelable
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    TooLarge:
+      description: La petición supera el límite de subida
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    StorageUnavailable:
+      description: Almacenamiento de ingesta no disponible
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    UnsupportedMediaType:
+      description: Tipo de archivo no admitido
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
     NotImplemented:
       description: La operación está declarada pero aún no implementada
       content:
@@ -154,6 +246,38 @@ components:
             $ref: "#/components/schemas/Error"
 
   schemas:
+    JobStatus:
+      type: string
+      enum: [PENDING, QUEUED, PROCESSING, COMPLETED, FAILED, CANCELLED]
+    Job:
+      type: object
+      required: [job_id, resource_id, status, progress, attempts, created_at, updated_at]
+      properties:
+        job_id: {type: string, format: uuid}
+        resource_id: {type: string, format: uuid}
+        status: {$ref: "#/components/schemas/JobStatus"}
+        stage: {type: string}
+        pipeline: {type: string, enum: [document, image, audio, video]}
+        progress: {type: integer, minimum: 0, maximum: 100}
+        attempts: {type: integer, minimum: 0}
+        error_code: {type: string}
+        error_message: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        started_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time}
+    Resource:
+      type: object
+      required: [resource_id, file_name, content_type, file_size, content_sha256, status, created_at, updated_at]
+      properties:
+        resource_id: {type: string, format: uuid}
+        file_name: {type: string}
+        content_type: {type: string}
+        file_size: {type: integer, minimum: 0}
+        content_sha256: {type: string}
+        status: {type: string, enum: [PENDING, STORED, PROCESSED, FAILED]}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
     Error:
       type: object
       required: [code, message]

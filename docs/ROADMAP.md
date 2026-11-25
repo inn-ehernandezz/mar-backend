@@ -1,6 +1,6 @@
 # MAR — Roadmap de implementación
 
-> Última actualización: 2026-11-24
+> Última actualización: 2026-11-25
 > Convención de estados: `[ ]` pendiente · `[~]` en curso · `[x]` completado · `[!]` bloqueado
 
 ## Estado global
@@ -9,7 +9,7 @@
 |---|---|---|
 | 1 | Infraestructura base (Go modular, HTTP, configuración, logging, errores) | `[x]` Completado |
 | 2 | Persistencia (Qdrant, Azure Blob Storage, Azure Table Storage) | `[x]` Completado |
-| 3 | Ingesta y procesamiento asíncrono (Service Bus, jobs, idempotencia) | `[ ]` Pendiente |
+| 3 | Ingesta y procesamiento asíncrono (Service Bus, jobs, idempotencia) | `[x]` Completado |
 | 4 | Procesamiento documental e IA (worker Python, Docling, BGE-M3, indexado) | `[ ]` Pendiente |
 | 5 | Agentic RAG (Qwen3, herramientas, reranker, referencias) | `[ ]` Pendiente |
 | 6 | Procesamiento multimodal (FFmpeg, OpenCV, faster-whisper, Qwen3-VL, Cosmos-Embed1) | `[ ]` Pendiente |
@@ -91,22 +91,24 @@ devolviendo `200` con las tres dependencias y `503` al detener Azurite.
 - [x] `compose.yaml` con Qdrant, Azurite y el backend Go (perfil `app`), con health checks y red interna
 - [x] `deploy/docker/api.Dockerfile` (compilación estática) verificado con `docker compose build`
 
-Diferido a la Fase 3 (fuera del alcance de la Fase 2, por diseño): Azure Service
-Bus y su emulador, el pipeline de ingesta, los consumidores de trabajos, el
-worker Python, las entidades `outbox` (el modelo de datos ya reserva su
-ubicación: misma partición del tenant en la tabla de trabajos) y los endpoints
-de negocio, que siguen respondiendo `501`.
+La fase 3 añade Service Bus, su emulador, los consumidores Go, el outbox y
+los endpoints de ingesta. El worker Python corresponde a la fase 4.
 
 ## Fase 3 — Ingesta y procesamiento asíncrono
 
-- [ ] `POST /v1/resources`: subida de archivos con validación y límites
-- [ ] Persistencia de originales en Blob
-- [ ] Creación de trabajos y encolado fiable (outbox + relay)
-- [ ] Integración con Azure Service Bus
-- [ ] Consumidores Go idempotentes (`cmd/worker`)
-- [ ] Reintentos con backoff, DLQ y recuperación ante fallos
-- [ ] `GET /v1/jobs/{id}` y `POST /v1/jobs/{id}/cancel`
-- [ ] Contratos de comunicación con el worker Python (`contracts/events`)
+Estado: **completada**. El flujo local usa Azurite y el emulador de Azure
+Service Bus. El worker completa esta fase después de verificar el original
+y asignar su tipo de pipeline. El procesamiento documental empieza en la
+fase 4.
+
+- [x] `POST /v1/resources`: subida multipart con validación e idempotencia
+- [x] Persistencia de originales en Blob y consulta con `GET /v1/resources/{id}`
+- [x] Creación de trabajos con transacción de Azure Table y encolado fiable mediante outbox
+- [x] Integración con Azure Service Bus y configuración del emulador local
+- [x] Consumidores Go idempotentes (`cmd/worker`)
+- [x] Reintentos con backoff, DLQ y reconciliación tras interrupciones
+- [x] `GET /v1/jobs/{id}` y `POST /v1/jobs/{id}/cancel`
+- [x] Esquemas JSON versionados de ingesta y del futuro worker Python (`contracts/events`)
 
 ## Fase 4 — Procesamiento documental e IA
 

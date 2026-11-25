@@ -206,10 +206,10 @@ func (s *Store) Get(ctx context.Context, container, name string) (storage.Object
 	}
 
 	c, cancel := s.withTimeout(ctx)
-	defer cancel()
 
 	resp, err := s.client.DownloadStream(c, container, name, nil)
 	if err != nil {
+		cancel()
 		return storage.ObjectReader{}, fmt.Errorf("azblob: descargar %s/%s: %w",
 			container, name, mapError(err))
 	}
@@ -224,8 +224,19 @@ func (s *Store) Get(ctx context.Context, container, name string) (storage.Object
 			LastModified: derefTime(resp.LastModified),
 			Metadata:     fromSDKMetadata(resp.Metadata),
 		},
-		Body: resp.Body,
+		Body: &downloadBody{ReadCloser: resp.Body, cancel: cancel},
 	}, nil
+}
+
+// The download context must stay alive while the caller reads the response.
+type downloadBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *downloadBody) Close() error {
+	defer b.cancel()
+	return b.ReadCloser.Close()
 }
 
 // Stat devuelve los metadatos de un objeto sin descargar su contenido.

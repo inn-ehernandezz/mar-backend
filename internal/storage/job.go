@@ -70,6 +70,12 @@ type Job struct {
 	Status        JobStatus
 	Progress      int32
 	Attempts      int32
+	Stage         string
+	Pipeline      string
+	LeaseUntil    *time.Time
+	DispatchID    string
+	DispatchAt    *time.Time
+	RequestID     string
 	ErrorCode     string
 	ErrorMessage  string
 	CreatedAt     time.Time

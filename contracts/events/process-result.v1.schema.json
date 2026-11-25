@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProcessResult v1",
+  "description": "Contrato para comunicar derivados o un error de procesamiento del futuro worker Python.",
+  "type": "object",
+  "required": ["schema_version", "tenant_id", "job_id", "resource_id", "request_id", "status"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "tenant_id": {"type": "string", "minLength": 1},
+    "job_id": {"type": "string", "format": "uuid"},
+    "resource_id": {"type": "string", "format": "uuid"},
+    "request_id": {"type": "string"},
+    "status": {"enum": ["completed", "failed"]},
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["container", "path", "content_type"],
+        "properties": {
+          "container": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1},
+          "content_type": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "retryable"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "retryable": {"type": "boolean"}
+      }
+    }
+  },
+  "if": {"properties": {"status": {"const": "completed"}}},
+  "then": {"required": ["artifacts"]},
+  "else": {"required": ["error"]}
+}

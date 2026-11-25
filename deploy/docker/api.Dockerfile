@@ -13,9 +13,11 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY . .
+COPY cmd ./cmd
+COPY internal ./internal
 
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/mar-api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/mar-api ./cmd/api && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/mar-worker ./cmd/worker
 
 # --- etapa de ejecución ---
 FROM alpine:3.22
@@ -23,7 +25,7 @@ FROM alpine:3.22
 RUN apk add --no-cache ca-certificates && \
     adduser -D -u 10001 mar
 
-COPY --from=build /out/mar-api /usr/local/bin/mar-api
+COPY --from=build /out/mar-api /out/mar-worker /usr/local/bin/
 
 USER mar
 EXPOSE 8080

@@ -13,19 +13,20 @@ import (
 type Code string
 
 const (
-	CodeInvalidArgument    Code = "invalid_argument"
-	CodeUnauthenticated    Code = "unauthenticated"
-	CodePermissionDenied   Code = "permission_denied"
-	CodeNotFound           Code = "not_found"
-	CodeMethodNotAllowed   Code = "method_not_allowed"
-	CodeConflict           Code = "conflict"
-	CodeCanceled           Code = "canceled"
-	CodeDeadlineExceeded   Code = "deadline_exceeded"
-	CodeResourceExhausted  Code = "resource_exhausted"
-	CodeFailedPrecondition Code = "failed_precondition"
-	CodeNotImplemented     Code = "not_implemented"
-	CodeUnavailable        Code = "unavailable"
-	CodeInternal           Code = "internal"
+	CodeInvalidArgument      Code = "invalid_argument"
+	CodeUnauthenticated      Code = "unauthenticated"
+	CodePermissionDenied     Code = "permission_denied"
+	CodeNotFound             Code = "not_found"
+	CodeMethodNotAllowed     Code = "method_not_allowed"
+	CodeConflict             Code = "conflict"
+	CodeCanceled             Code = "canceled"
+	CodeDeadlineExceeded     Code = "deadline_exceeded"
+	CodeUnsupportedMediaType Code = "unsupported_media_type"
+	CodeResourceExhausted    Code = "resource_exhausted"
+	CodeFailedPrecondition   Code = "failed_precondition"
+	CodeNotImplemented       Code = "not_implemented"
+	CodeUnavailable          Code = "unavailable"
+	CodeInternal             Code = "internal"
 )
 
 // Error es el error de la API. Message y Details son seguros para el cliente;
@@ -141,6 +142,8 @@ func HTTPStatus(code Code) int {
 		return http.StatusRequestTimeout
 	case CodeDeadlineExceeded:
 		return http.StatusGatewayTimeout
+	case CodeUnsupportedMediaType:
+		return http.StatusUnsupportedMediaType
 	case CodeResourceExhausted:
 		return http.StatusRequestEntityTooLarge
 	case CodeFailedPrecondition:

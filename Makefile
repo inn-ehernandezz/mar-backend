@@ -3,7 +3,7 @@ GO ?= go
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build run test race fmt vet tidy verify up up-full down ps logs image
+.PHONY: help build run run-worker test race fmt vet tidy verify up up-full up-ingestion down ps logs image
 
 help: ## Muestra esta ayuda
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -15,6 +15,10 @@ build: ## Compila todos los binarios
 run: ## Ejecuta el servidor HTTP en el host (carga .env si existe)
 	@set -a; [ -f .env ] && . ./.env; set +a; \
 		$(GO) run ./cmd/api
+
+run-worker: ## Ejecuta el worker de ingesta en el host (carga .env si existe)
+	@set -a; [ -f .env ] && . ./.env; set +a; \
+		$(GO) run ./cmd/worker
 
 test: ## Ejecuta todas las pruebas
 	$(GO) test ./...
@@ -39,14 +43,17 @@ up: ## Levanta la infraestructura local (Qdrant + Azurite)
 up-full: image ## Construye y levanta la pila completa, incluido el backend Go
 	docker compose --profile app up -d
 
+up-ingestion: image ## Levanta la pila completa con Service Bus y worker
+	MAR_SERVICEBUS_ENABLED=true docker compose --profile app --profile messaging up -d
+
 image: ## Construye la imagen Docker del backend
 	docker compose --profile app build api
 
 down: ## Detiene los servicios locales
-	docker compose down
+	docker compose --profile app --profile messaging down
 
 ps: ## Muestra el estado de los servicios locales
-	docker compose ps
+	docker compose --profile app --profile messaging ps
 
 logs: ## Sigue los registros de los servicios locales
-	docker compose logs -f
+	docker compose --profile app --profile messaging logs -f

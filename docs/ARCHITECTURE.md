@@ -699,6 +699,13 @@ Estados: `PENDING`, `QUEUED`, `PROCESSING`, `COMPLETED`, `FAILED`, `CANCELLED`. 
 | Reconciliación | Comparación periódica entre estado persistido y mensajes publicados |
 | Publicación fiable | **Outbox** (ver 12.4) |
 
+En la fase 3, `COMPLETED` indica que el worker verificó el tamaño y el SHA-256
+del original y clasificó su tipo de pipeline. El recurso sigue en `STORED`.
+El reintento conserva el estado `PROCESSING` y registra la etapa
+`retry_scheduled`. El relay recupera intentos interrumpidos cuando caduca la
+reserva del worker y vuelve a publicar entregas antiguas sin consumir. La extracción y el indexado se incorporan en fases
+posteriores.
+
 ### 12.4 Publicación fiable (outbox)
 
 Azure Table Storage no ofrece transacciones entre particiones, pero **sí** permite operaciones de lote atómico dentro de una misma partición. Como `PartitionKey = tenant_id`:
@@ -719,10 +726,10 @@ Endpoints previstos, con su estado real en la implementación. **Los endpoints n
 |---|---|---|---|
 | `GET` | `/health/live` | Sonda de vida del proceso | Implementado |
 | `GET` | `/health/ready` | Sonda de disponibilidad con checks registrados | Implementado |
-| `POST` | `/v1/resources` | Subida de un recurso y creación del trabajo | Fase 3 |
-| `GET` | `/v1/resources/{id}` | Consulta de metadatos de un recurso | Fase 3 |
-| `GET` | `/v1/jobs/{id}` | Estado, progreso y errores de un trabajo | Fase 2/3 |
-| `POST` | `/v1/jobs/{id}/cancel` | Cancelación de un trabajo | Fase 3 |
+| `POST` | `/v1/resources` | Subida de un recurso y creación del trabajo | Implementado |
+| `GET` | `/v1/resources/{id}` | Consulta de metadatos de un recurso | Implementado |
+| `GET` | `/v1/jobs/{id}` | Estado, progreso y errores de un trabajo | Implementado |
+| `POST` | `/v1/jobs/{id}/cancel` | Cancelación de un trabajo | Implementado |
 | `POST` | `/v1/search` | Búsqueda semántica directa (sin agente) | Fase 4 |
 | `POST` | `/v1/queries` | Consulta con Agentic RAG | Fase 5 |
 

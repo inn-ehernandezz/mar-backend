@@ -12,10 +12,12 @@ import (
 	"syscall"
 	"time"
 
+	"mar-backend/internal/ingestion"
 	"mar-backend/internal/platform/config"
 	"mar-backend/internal/platform/health"
 	"mar-backend/internal/platform/httpapi"
 	"mar-backend/internal/platform/logging"
+	"mar-backend/internal/platform/servicebus"
 )
 
 func main() {
@@ -61,15 +63,47 @@ func run() error {
 	ensureStorage(initCtx, cfg, deps, logger)
 	cancelInit()
 
-	router := httpapi.NewRouter(httpapi.RouterDeps{
-		Config: cfg,
-		Logger: logger,
-		Health: checks,
-	})
-	server := httpapi.NewServer(cfg, router, logger)
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	service := &ingestion.Service{
+		Objects: deps.Blob, Resources: deps.Table.Resources(), Jobs: deps.Table.Jobs(), RawContainer: cfg.Blob.ContainerRaw,
+	}
+	if cfg.Bus.Enabled {
+		bus, err := servicebus.New(cfg.Bus)
+		if err != nil {
+			return fmt.Errorf("Azure Service Bus: %w", err)
+		}
+		wake := make(chan struct{}, 1)
+		service.WakeRelay = func() {
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+		}
+		relay := ingestion.Relay{Service: service, Publish: bus.Publish, Logger: logger, Wake: wake}
+		relayCtx, cancelRelay := context.WithCancel(ctx)
+		relayDone := make(chan struct{})
+		go func() {
+			defer close(relayDone)
+			relay.Run(relayCtx)
+		}()
+		defer func() {
+			cancelRelay()
+			<-relayDone
+			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = bus.Close(closeCtx)
+		}()
+	}
+
+	router := httpapi.NewRouter(httpapi.RouterDeps{
+		Config:    cfg,
+		Logger:    logger,
+		Health:    checks,
+		Ingestion: service,
+	})
+	server := httpapi.NewServer(cfg, router, logger)
 
 	serveErr := make(chan error, 1)
 	go func() {

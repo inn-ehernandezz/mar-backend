@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"mar-backend/internal/ingestion"
 	"mar-backend/internal/platform/apierr"
 	"mar-backend/internal/platform/config"
 	"mar-backend/internal/platform/health"
@@ -13,9 +14,10 @@ import (
 
 // RouterDeps agrupa las dependencias necesarias para construir el enrutador.
 type RouterDeps struct {
-	Config config.Config
-	Logger *slog.Logger
-	Health *health.Registry
+	Config    config.Config
+	Logger    *slog.Logger
+	Health    *health.Registry
+	Ingestion *ingestion.Service
 }
 
 // NewRouter construye el enrutador HTTP con los middleware transversales y las
@@ -44,10 +46,10 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	// todas las operaciones de negocio.
 	v1 := router.Group("/v1", TenantMiddleware(deps.Config.Tenancy))
 	{
-		v1.POST("/resources", notImplementedHandler(deps.Logger, "POST /v1/resources"))
-		v1.GET("/resources/:id", notImplementedHandler(deps.Logger, "GET /v1/resources/{id}"))
-		v1.GET("/jobs/:id", notImplementedHandler(deps.Logger, "GET /v1/jobs/{id}"))
-		v1.POST("/jobs/:id/cancel", notImplementedHandler(deps.Logger, "POST /v1/jobs/{id}/cancel"))
+		v1.POST("/resources", deps.upload)
+		v1.GET("/resources/:id", deps.getResource)
+		v1.GET("/jobs/:id", deps.getJob)
+		v1.POST("/jobs/:id/cancel", deps.cancelJob)
 		v1.POST("/search", notImplementedHandler(deps.Logger, "POST /v1/search"))
 		v1.POST("/queries", notImplementedHandler(deps.Logger, "POST /v1/queries"))
 	}

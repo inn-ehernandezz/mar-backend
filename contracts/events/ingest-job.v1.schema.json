@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IngestJobMessage v1",
+  "type": "object",
+  "required": ["schema_version", "tenant_id", "job_id", "resource_id", "request_id", "attempt"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "tenant_id": {"type": "string", "minLength": 1},
+    "job_id": {"type": "string", "format": "uuid"},
+    "resource_id": {"type": "string", "format": "uuid"},
+    "request_id": {"type": "string"},
+    "attempt": {"type": "integer", "minimum": 1, "maximum": 3}
+  }
+}

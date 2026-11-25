@@ -19,6 +19,20 @@ name: mar-backend
 x-azurite-account-name: &azurite-account-name devstoreaccount1
 x-azurite-account-key: &azurite-account-key Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
 
+# La mensajería local es optativa y comparte los endpoints de persistencia.
+x-local-storage: &local-storage
+  MAR_BLOB_ENDPOINT: http://azurite:10000/devstoreaccount1
+  MAR_BLOB_ACCOUNT_NAME: *azurite-account-name
+  MAR_BLOB_ACCOUNT_KEY: *azurite-account-key
+  MAR_TABLE_ENDPOINT: http://azurite:10002/devstoreaccount1
+  MAR_TABLE_ACCOUNT_NAME: *azurite-account-name
+  MAR_TABLE_ACCOUNT_KEY: *azurite-account-key
+  MAR_TABLE_RESOURCES: resources
+  MAR_TABLE_JOBS: jobs
+
+x-local-bus: &local-bus
+  MAR_SERVICEBUS_CONNECTION_STRING: "Endpoint=sb://servicebus;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true"
+
 services:
   qdrant:
     image: qdrant/qdrant:v1.20.2
@@ -88,16 +102,10 @@ services:
       MAR_QDRANT_TEXT_COLLECTION: text_embeddings
       MAR_QDRANT_VISUAL_COLLECTION: visual_embeddings
       MAR_QDRANT_TEXT_VECTOR_SIZE: "1024"
-      MAR_BLOB_ENDPOINT: http://azurite:10000/devstoreaccount1
-      MAR_BLOB_ACCOUNT_NAME: *azurite-account-name
-      MAR_BLOB_ACCOUNT_KEY: *azurite-account-key
-      MAR_TABLE_ENDPOINT: http://azurite:10002/devstoreaccount1
-      MAR_TABLE_ACCOUNT_NAME: *azurite-account-name
-      MAR_TABLE_ACCOUNT_KEY: *azurite-account-key
-      MAR_TABLE_RESOURCES: resources
-      MAR_TABLE_JOBS: jobs
+      <<: [*local-storage, *local-bus]
+      MAR_SERVICEBUS_ENABLED: "${MAR_SERVICEBUS_ENABLED:-false}"
     ports:
-      - "8080:8080"
+      - "${MAR_DOCKER_HTTP_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/health/live >/dev/null 2>&1 || exit 1"]
       interval: 10s
@@ -106,8 +114,50 @@ services:
       start_period: 10s
     networks: [mar]
 
+  servicebus-db:
+    profiles: [messaging]
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "${MAR_EMULATOR_ACCEPT_EULA:-N}"
+      MSSQL_SA_PASSWORD: "${MAR_EMULATOR_SQL_PASSWORD:-}"
+    volumes:
+      - servicebus-data:/var/opt/mssql
+    networks: [mar]
+
+  servicebus:
+    profiles: [messaging]
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+    depends_on: [servicebus-db]
+    environment:
+      ACCEPT_EULA: "${MAR_EMULATOR_ACCEPT_EULA:-N}"
+      MSSQL_SA_PASSWORD: "${MAR_EMULATOR_SQL_PASSWORD:-}"
+      SQL_SERVER: servicebus-db
+      EMULATOR_HTTP_PORT: "5300"
+    volumes:
+      - ./deploy/servicebus/config.json:/ServiceBus_Emulator/ConfigFiles/Config.json:ro
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:5300:5300"
+    networks: [mar]
+
+  worker:
+    profiles: [messaging]
+    image: mar-backend/api:dev
+    entrypoint: ["/usr/local/bin/mar-worker"]
+    restart: unless-stopped
+    depends_on:
+      azurite:
+        condition: service_healthy
+      servicebus:
+        condition: service_started
+    environment:
+      <<: [*local-storage, *local-bus]
+      MAR_SERVICEBUS_ENABLED: "true"
+    networks: [mar]
+
 volumes:
   qdrant-data:
+  servicebus-data:
 
 networks:
   mar:
