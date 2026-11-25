@@ -10,7 +10,7 @@
 | 1 | Infraestructura base (Go modular, HTTP, configuración, logging, errores) | `[x]` Completado |
 | 2 | Persistencia (Qdrant, Azure Blob Storage, Azure Table Storage) | `[x]` Completado |
 | 3 | Ingesta y procesamiento asíncrono (Service Bus, jobs, idempotencia) | `[x]` Completado |
-| 4 | Procesamiento documental e IA (worker Python, Docling, BGE-M3, indexado) | `[ ]` Pendiente |
+| 4 | Procesamiento documental e IA (worker Python, Docling, BGE-M3, indexado) | `[x]` Completado |
 | 5 | Agentic RAG (Qwen3, herramientas, reranker, referencias) | `[ ]` Pendiente |
 | 6 | Procesamiento multimodal (FFmpeg, OpenCV, faster-whisper, Qwen3-VL, Cosmos-Embed1) | `[ ]` Pendiente |
 | 7 | Evolución hacia microservicios | `[ ]` Pendiente (no iniciar sin necesidad real) |
@@ -112,11 +112,20 @@ fase 4.
 
 ## Fase 4 — Procesamiento documental e IA
 
-- [ ] Worker Python modular (`workers/media`)
-- [ ] Integración de Docling y Tesseract
-- [ ] Fragmentación con metadatos
-- [ ] Adaptador de BGE-M3 e indexado en `text_embeddings`
-- [ ] `POST /v1/search`
+Estado: **completada**. Validada en una pila Docker aislada con Docling,
+Tesseract, BGE-M3 en CPU, Azurite, Service Bus y Qdrant. Se probaron PDF
+nativos y escaneados, Excel, Word, PowerPoint, búsqueda con referencias y
+recuperación ante indisponibilidad del extractor, del índice y del modelo.
+
+El arranque Docker de la fase 4 detecta las GPU disponibles. Prueba NVIDIA
+con TEI, AMD con Infinity y ROCm, y usa CPU si no consigue arrancar el
+modelo en GPU. Los comandos están al final del [README](../README.md#phase-4-startup-commands).
+
+- [x] Worker Python de documentos (`workers/media`) e integración de Docling y Tesseract
+- [x] Fragmentación con referencias por formato y checkpoints duraderos
+- [x] BGE-M3 en salida densa e indexado idempotente en `text_embeddings`
+- [x] `POST /v1/search` con aislamiento por tenant
+- [x] Reindexado de originales existentes y recuperación entre etapas
 
 ## Fase 5 — Agentic RAG
 

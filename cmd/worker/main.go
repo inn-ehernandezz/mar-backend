@@ -10,11 +10,13 @@ import (
 	"syscall"
 	"time"
 
+	"mar-backend/internal/documents"
 	"mar-backend/internal/ingestion"
 	"mar-backend/internal/platform/config"
 	"mar-backend/internal/platform/logging"
 	"mar-backend/internal/platform/persistence"
 	"mar-backend/internal/platform/servicebus"
+	"mar-backend/internal/storage/qdrant"
 )
 
 func main() {
@@ -53,6 +55,17 @@ func run() error {
 
 	service := &ingestion.Service{
 		Objects: objects, Resources: tables.Resources(), Jobs: tables.Jobs(), RawContainer: cfg.Blob.ContainerRaw,
+	}
+	if cfg.Documents.Enabled {
+		index, err := qdrant.New(qdrant.Config{
+			URL: cfg.Qdrant.URL, APIKey: cfg.Qdrant.APIKey, UseTLS: cfg.Qdrant.UseTLS,
+			RequestTimeout: cfg.Qdrant.RequestTimeout,
+		})
+		if err != nil {
+			return err
+		}
+		defer index.Close()
+		service.Documents = documents.FromConfig(cfg, objects, service.Resources, index)
 	}
 	relay := ingestion.Relay{Service: service, Publish: bus.Publish, Logger: logger}
 	var workers sync.WaitGroup

@@ -50,12 +50,8 @@ func (deps RouterDeps) upload(c *gin.Context) {
 		return
 	}
 
-	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	if key == "" {
-		key = ids.New()
-	}
-	if len(key) > 128 || strings.ContainsFunc(key, func(r rune) bool { return r < 33 || r > 126 }) {
-		respondError(c, deps.Logger, apierr.InvalidArgument("Idempotency-Key debe tener hasta 128 caracteres ASCII visibles"))
+	key, valid := requestKey(c, deps)
+	if !valid {
 		return
 	}
 
@@ -145,7 +141,7 @@ func (deps RouterDeps) getResource(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"resource_id": resource.ResourceID, "file_name": resource.FileName,
 		"content_type": resource.ContentType, "file_size": resource.FileSize,
-		"content_sha256": resource.ContentHash, "status": resource.Status,
+		"content_sha256": resource.ContentHash, "status": resource.Status, "index_version": resource.IndexVersion,
 		"created_at": resource.CreatedAt, "updated_at": resource.UpdatedAt,
 	})
 }
@@ -178,14 +174,15 @@ func (deps RouterDeps) job(c *gin.Context, cancel bool) {
 		return
 	}
 	c.JSON(http.StatusOK, jobResponse{
-		JobID: job.JobID, ResourceID: job.ResourceID, Status: job.Status,
+		JobID: job.JobID, ResourceID: job.ResourceID, Status: job.Status, JobType: job.JobType,
 		Stage: job.Stage, Pipeline: job.Pipeline, Progress: job.Progress, Attempts: job.Attempts,
-		ErrorCode: job.ErrorCode, ErrorMessage: job.ErrorMessage, CreatedAt: job.CreatedAt,
+		ErrorCode: job.ErrorCode, ErrorMessage: job.ErrorMessage, ErrorStage: job.ErrorStage, CreatedAt: job.CreatedAt,
 		UpdatedAt: job.UpdatedAt, StartedAt: job.StartedAt, CompletedAt: job.CompletedAt,
 	})
 }
 
 type jobResponse struct {
+	JobType      string            `json:"job_type"`
 	JobID        string            `json:"job_id"`
 	ResourceID   string            `json:"resource_id"`
 	Status       storage.JobStatus `json:"status"`
@@ -193,6 +190,7 @@ type jobResponse struct {
 	Pipeline     string            `json:"pipeline,omitempty"`
 	Progress     int32             `json:"progress"`
 	Attempts     int32             `json:"attempts"`
+	ErrorStage   string            `json:"error_stage,omitempty"`
 	ErrorCode    string            `json:"error_code,omitempty"`
 	ErrorMessage string            `json:"error_message,omitempty"`
 	CreatedAt    time.Time         `json:"created_at"`
@@ -203,6 +201,8 @@ type jobResponse struct {
 
 func (deps RouterDeps) ingestionError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, ingestion.ErrUnsupportedDocument):
+		err = apierr.New(apierr.CodeUnsupportedMediaType, "formato documental no admitido").Wrap(err)
 	case errors.Is(err, storage.ErrNotFound):
 		err = apierr.NotFound("recurso o trabajo no encontrado").Wrap(err)
 	case errors.Is(err, storage.ErrConflict), errors.Is(err, storage.ErrInvalidTransition):
@@ -211,4 +211,16 @@ func (deps RouterDeps) ingestionError(c *gin.Context, err error) {
 		err = apierr.InvalidArgument("los datos de la petición no son válidos").Wrap(err)
 	}
 	respondError(c, deps.Logger, err)
+}
+
+func requestKey(c *gin.Context, deps RouterDeps) (string, bool) {
+	key := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if key == "" {
+		key = ids.New()
+	}
+	if len(key) > 128 || strings.ContainsFunc(key, func(r rune) bool { return r < 33 || r > 126 }) {
+		respondError(c, deps.Logger, apierr.InvalidArgument("Idempotency-Key debe tener hasta 128 caracteres ASCII visibles"))
+		return "", false
+	}
+	return key, true
 }

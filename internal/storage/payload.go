@@ -18,6 +18,7 @@ const (
 	FieldTimestampEnd     = "timestamp_end"
 	FieldModelName        = "model_name"
 	FieldModelVersion     = "model_version"
+	FieldIndexVersion     = "index_version"
 	FieldCreatedAt        = "created_at"
 	FieldSchemaVersion    = "schema_version"
 )

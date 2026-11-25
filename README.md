@@ -18,8 +18,8 @@ context-aware responses through a scalable and modular architecture.
 | 1 | Core Infrastructure | ✅ Completed |
 | 2 | Persistence and Storage | ✅ Completed |
 | 3 | Data Ingestion and Asynchronous Processing | ✅ Completed |
-| 4 | Document Processing and AI | 🔵 Next |
-| 5 | Agentic RAG | ⏳ Pending |
+| 4 | Document Processing and AI | ✅ Completed |
+| 5 | Agentic RAG | 🔵 Next |
 | 6 | Multimodal Processing | ⏳ Pending |
 | 7 | Evolution Towards Microservices | ⏳ Pending |
 
@@ -176,6 +176,82 @@ resource stays `STORED` until a later phase processes and indexes its
 contents. See the [HTTP contract](contracts/openapi/openapi.yaml) and the
 [event contracts](contracts/events).
 
+### Run document processing and search
+
+Use the same local `.env` as for asynchronous ingestion. The first start
+downloads the BGE-M3 weights and the first PDF warms up the Docling models.
+Model caches use Docker volumes. Docling and Tesseract run on CPU. At
+startup MAR checks which GPUs Docker can access. It tries NVIDIA with
+Text Embeddings Inference (TEI), then AMD with Infinity and PyTorch ROCm.
+If neither GPU starts a healthy model server, automatic mode starts TEI
+on CPU. All three options use the same BGE-M3 revision, CLS pooling and
+1024-dimensional dense vectors.
+
+NVIDIA requires the NVIDIA driver and NVIDIA Container Toolkit. AMD uses
+Linux x86-64 with `amdgpu`, compatible ROCm hardware and access to
+`/dev/kfd` and the GPU's render device from Docker. The first AMD start
+builds an image for the detected GPU architecture and downloads its own
+copy of the model weights. Later starts reuse the image layers and weights.
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/sample-workload.html)
+· [AMD ROCm PyTorch installation](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/frameworks/pytorch/install.html)
+
+`make up-documents` waits for the extractor and BGE-M3 to be healthy before
+bringing up the full stack. The extraction and embedding services listen on
+the Compose network. Use the API port from your `.env` (port `18082` in the
+current local setup). See the [startup commands](#phase-4-startup-commands)
+at the end of this README.
+
+#### Upload, check the job and search
+
+Use a PDF with text, a scanned PDF, or an Excel workbook. The same upload
+also supports DOCX, PPTX, plain UTF-8 text, Markdown and comma-separated CSV.
+Use a different idempotency key for a separate upload. The extractor accepts
+up to 200 PDF pages, 100,000 XLSX cells and 3,000 fragments per document.
+
+```bash
+BASE=http://localhost:18082
+FILE=/path/to/document.pdf
+TENANT=demo-fase4
+
+submission=$(curl -fsS -H "X-Tenant-ID: $TENANT" \
+  -H "Idempotency-Key: phase4-$(date +%s)" \
+  -F "file=@$FILE" "$BASE/v1/resources")
+printf '%s\n' "$submission" | jq .
+JOB_ID=$(jq -r .job_id <<<"$submission")
+RESOURCE_ID=$(jq -r .resource_id <<<"$submission")
+
+curl -fsS -H "X-Tenant-ID: $TENANT" "$BASE/v1/jobs/$JOB_ID" | jq .
+curl -fsS -H "X-Tenant-ID: $TENANT" "$BASE/v1/resources/$RESOURCE_ID" | jq .
+
+query=$(jq -nc --arg id "$RESOURCE_ID" \
+  '{query:"¿Cuánto me pagan por comer durante un viaje?",limit:5,resource_id:$id}')
+curl -fsS -H "X-Tenant-ID: $TENANT" -H 'Content-Type: application/json' \
+  -d "$query" "$BASE/v1/search" | jq .
+```
+
+Run the job query again until it reaches `COMPLETED` with
+`stage: document_indexed` and `progress: 100`. The resource should then be
+`PROCESSED`. Change `query` to match your document. Search returns passages
+and their source references. A PDF hit can include `page`, `pages` for a multi-page block, and `section`,
+while an Excel hit includes `sheet` and `cells`. The optional `resource_id`
+narrows the search to one document. Using a different `X-Tenant-ID` returns
+no results for that document.
+
+To process an existing Phase 3 upload or resume a job after exhausting its
+automatic retries, enqueue the stored resource with a **new** idempotency key:
+
+```bash
+curl -fsS -X POST -H "X-Tenant-ID: $TENANT" \
+  -H "Idempotency-Key: reindex-$(date +%s)" \
+  "$BASE/v1/resources/$RESOURCE_ID/index" | jq .
+```
+
+Use the new `job_id` when polling. A repeat with the same key returns the
+same job. A new job for the same original can reuse the stored extraction
+and embedding batches.
+
+See the [failure drills](#phase-4-failure-drills) at the end of this README.
+
 ### Run the tests
 
 With Go and Make installed, start Qdrant and Azurite before running the tests.
@@ -189,5 +265,153 @@ go test -count=1 -v ./internal/platform/httpapi ./internal/storage/...
 make race
 ```
 
+Run `python3 -m unittest discover -s workers/media` for the Python fragment
+and provenance tests.
+
 Check the verbose output for `SKIP` to confirm that the ingestion and storage
 integration tests ran. They skip when their dependencies are unreachable.
+
+## Phase 4 startup commands
+
+Run these from the repository root with the local `.env` configured for
+Azurite and the Service Bus emulator.
+
+| Command | What starts or changes |
+|---|---|
+| `make up-documents` | Starts the API, Go worker, Qdrant, Azurite, Service Bus, Docling and BGE-M3. Tries NVIDIA, then AMD, then CPU as available. |
+| `make up-document-models` | Starts Docling and BGE-M3 only. Uses the same automatic accelerator selection. |
+| `MAR_DOCUMENT_ACCELERATOR=cpu make up-documents` | Starts the full stack with BGE-M3 on CPU. |
+| `MAR_DOCUMENT_ACCELERATOR=gpu make up-documents` | Requires BGE-M3 to start on a supported NVIDIA or AMD GPU. Reports an error if neither works. |
+| `make documents-ps` | Shows the running containers, the inference image and each reported health status. |
+| `make documents-logs` | Follows the API, Go worker, extractor and model logs. |
+| `make stop-documents` | Stops the stack and keeps the containers and their data. |
+
+The same `MAR_DOCUMENT_ACCELERATOR` override works with
+`make up-document-models`. Set `MAR_DOCUMENT_START_TIMEOUT` in seconds if
+the first model download needs more than the default 600 seconds.
+On AMD, `make documents-ps` shows an image such as
+`mar-backend/embeddings-rocm:gfx1200`. The `embeddings` log shows the GPU name
+and ROCm version after a successful computation on the device.
+
+To start the API and Go worker separately after starting the model services,
+use the following command. Compose also starts their storage and messaging
+dependencies when needed.
+
+```bash
+docker compose -f compose.yaml -f compose.documents.yaml \
+  --profile app --profile messaging --profile documents up -d --build api worker
+```
+
+Check the API and all configured storage dependencies:
+
+```bash
+BASE=http://localhost:18082
+curl -fsS "$BASE/health/ready"
+```
+
+### Stop all MAR services
+
+From the repository root, stop the API, Go worker, document extractor,
+BGE-M3, Qdrant, Azurite, Service Bus and its SQL Server with:
+
+```bash
+make stop-documents
+make documents-ps
+```
+
+`make documents-ps` should show no running services after the stop. If you
+started Go on the host with `make run` or `make run-worker`, press `Ctrl+C`
+in each of those terminals as well. Run `make up-documents` when you want to
+start MAR again.
+
+The stop command keeps the containers and their data. Azurite stores its
+data inside its container, so deleting that container also deletes the
+local originals, derived files and tables.
+
+### Phase 4 failure drills
+
+Run these against your local development stack with `make up-documents`
+already running. Prepare the commands below once from the repository root
+in Bash. Each `submit` creates a new test resource so it starts with fresh
+checkpoints.
+
+```bash
+BASE=http://localhost:18082
+TENANT=demo-fallos
+phase4=(docker compose -f compose.yaml -f compose.documents.yaml \
+  --profile app --profile messaging --profile documents)
+
+printf 'El importe de la dieta de viaje es de 55 euros.\n' >/tmp/mar-retry.txt
+printf '%%PDF-1.7\ninvalid PDF content\n' >/tmp/mar-invalid.pdf
+
+submit() {
+  local response
+  response=$(curl -fsS -H "X-Tenant-ID: $TENANT" \
+    -F "file=@$1" "$BASE/v1/resources") || return
+  JOB_ID=$(jq -er .job_id <<<"$response") || return
+  RESOURCE_ID=$(jq -er .resource_id <<<"$response") || return
+  jq . <<<"$response"
+}
+
+job() {
+  curl -fsS -H "X-Tenant-ID: $TENANT" "$BASE/v1/jobs/$JOB_ID" | \
+    jq '{status, stage, attempts, progress, error_stage, error_code}'
+}
+```
+
+Run one scenario at a time. Call `job` repeatedly to see the intermediate
+states. To catch a retry, call it once a second. Press `Ctrl+C` to stop
+watching.
+
+```bash
+while true; do job; sleep 1; done
+```
+
+| Scenario | What to do | Expected result |
+|---|---|---|
+| **Extractor offline** | Run `"${phase4[@]}" stop media`, then `submit /tmp/mar-retry.txt`. When `job` shows the error, run `"${phase4[@]}" start media`. | `extracting` reports `extraction_unavailable`. A later attempt can complete as soon as the extractor is back. |
+| **Qdrant offline** | Run `"${phase4[@]}" stop qdrant`, then `submit /tmp/mar-retry.txt`. When `job` shows the error, run `"${phase4[@]}" start qdrant`. | `indexing` reports `index_unavailable`. Qdrant calls may take a few seconds to time out. The retry uses the saved vectors and repeats the upserts with the same point IDs. |
+| **BGE-M3 offline** | Run `"${phase4[@]}" stop embeddings`, then `submit /tmp/mar-retry.txt`. Watch the job reach `FAILED`, then run `"${phase4[@]}" start embeddings` and wait for it to become healthy. | `embedding` reports `embedding_unavailable`. The job reaches `FAILED` at attempt 3. Search returns HTTP `503` while the model is offline. |
+| **Invalid PDF** | Run `submit /tmp/mar-invalid.pdf`. | `FAILED` at attempt 1 with `error_stage: extracting` and `error_code: document_conversion_failed`. |
+| **Service Bus offline** | Run `"${phase4[@]}" stop servicebus`, then `submit /tmp/mar-retry.txt`. Check the job before running `"${phase4[@]}" start servicebus`. | The job stays `QUEUED` with zero attempts while the message is pending in the outbox. It can start processing when the emulator is ready again. |
+| **Cancellation before processing** | Run `"${phase4[@]}" stop worker`, then `submit /tmp/mar-retry.txt`. Cancel with the command below and run `"${phase4[@]}" start worker`. | The job stays `CANCELLED`, with zero attempts when no worker had claimed it. |
+
+```bash
+curl -fsS -X POST -H "X-Tenant-ID: $TENANT" \
+  "$BASE/v1/jobs/$JOB_ID/cancel" | jq '{status, attempts}'
+```
+
+For **worker interruption during processing**, pause the extractor, submit a
+fresh document and run `job` until it shows `PROCESSING` and `attempts: 1`.
+Then stop the worker, unpause the extractor and start the worker again.
+
+```bash
+"${phase4[@]}" pause media
+submit /tmp/mar-retry.txt
+job
+# Once the job shows PROCESSING:
+"${phase4[@]}" stop -t 5 worker
+"${phase4[@]}" unpause media
+"${phase4[@]}" start worker
+```
+
+The relay waits for the worker's lease to expire, then records
+`worker_lease_expired` and schedules another attempt. Poll `job` to see the
+same job reach `COMPLETED` on attempt 2.
+
+A transient failure can schedule up to two retries, **5 seconds** after the
+first failure and **10 seconds** after the second. During the wait the job is
+`PROCESSING` with `stage: retry_scheduled`. If the third attempt fails, fix the
+dependency and enqueue a new job for the same resource. The original and its
+saved checkpoints remain available.
+
+```bash
+response=$(curl -fsS -X POST -H "X-Tenant-ID: $TENANT" \
+  "$BASE/v1/resources/$RESOURCE_ID/index")
+JOB_ID=$(jq -er .job_id <<<"$response")
+job
+```
+
+Use a fixed `Idempotency-Key` if you want to repeat this enqueue request and
+recover the same new job ID. For another processing attempt, send a new key
+or omit the header.

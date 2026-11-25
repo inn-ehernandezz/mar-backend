@@ -697,7 +697,7 @@ Estados: `PENDING`, `QUEUED`, `PROCESSING`, `COMPLETED`, `FAILED`, `CANCELLED`. 
 | Cancelación | `POST /v1/jobs/{id}/cancel`; el worker comprueba el estado antes de cada etapa |
 | Progreso | Actualización de `stage` y `progress` por etapa, con marca temporal |
 | Reconciliación | Comparación periódica entre estado persistido y mensajes publicados |
-| Publicación fiable | **Outbox** (ver 12.4) |
+| Publicación fiable | **Outbox** (ver 12.5) |
 
 En la fase 3, `COMPLETED` indica que el worker verificó el tamaño y el SHA-256
 del original y clasificó su tipo de pipeline. El recurso sigue en `STORED`.
@@ -706,7 +706,89 @@ El reintento conserva el estado `PROCESSING` y registra la etapa
 reserva del worker y vuelve a publicar entregas antiguas sin consumir. La extracción y el indexado se incorporan en fases
 posteriores.
 
-### 12.4 Publicación fiable (outbox)
+### 12.4 Procesamiento documental y recuperación
+
+El original se conserva en `raw`. El worker Go reserva el trabajo con un
+ETag y renueva su reserva en Table Storage. El consumidor también renueva
+el bloqueo del mensaje en Service Bus cuando una etapa tarda más de lo
+habitual. Cada etapa registra un nombre y un progreso. La API expone
+`error_stage` y `error_code` en las consultas de trabajo.
+
+Go transmite el original al extractor Python por HTTP interno. El extractor
+comprueba su SHA-256 antes de procesarlo. Docling 2.81.0 extrae PDF, DOCX y
+PPTX. Tesseract hace OCR de PDF en castellano e inglés. openpyxl conserva
+las referencias de hoja y celdas en XLSX, y el lector de CSV conserva la fila.
+El extractor pone límites al tamaño, páginas, celdas y fragmentos. Los
+metadatos asociados dependen del formato.
+
+La extracción se guarda como `fragments.json` en `derived`, bajo una ruta
+ligada al recurso, el SHA-256 del original y la versión de extracción. Los
+embeddings se escriben en lotes de hasta ocho, también en `derived`, bajo
+la revisión del modelo. Los checkpoints se escriben sin sobrescribir y se
+validan al leerlos. Si hay dos escritores concurrentes, se reutiliza el
+checkpoint que se guardó primero.
+
+La fase 4 usa BGE-M3 en modo denso de 1024 dimensiones. El entorno local usa
+Text Embeddings Inference 1.9 en NVIDIA y CPU, e Infinity con PyTorch ROCm
+en AMD. Los motores solicitan la revisión
+`5617a9f61b028005a4858fdac845db406aefb181` y aplican pooling CLS. Go usa el contrato
+`/v1/embeddings` para los fragmentos y consultas. La misma integración admite
+un despliegue de vLLM que exponga ese contrato con los mismos pesos y pooling.
+
+Qdrant recibe upserts con identificadores deterministas por tenant, recurso,
+versión de índice y posición del fragmento. Una escritura interrumpida puede
+repetirse con los vectores persistidos. Tras subir todos los lotes, el worker
+entra en la etapa de publicación mediante un ETag y marca el recurso
+`PROCESSED` con su versión de índice. La búsqueda filtra por tenant y versión
+y comprueba que el recurso haya quedado publicado. La etapa de publicación
+cierra la ventana de cancelación para evitar resultados de un trabajo
+cancelado. Un trabajo que ya estaba completado en fase 3 puede indexarse con
+`POST /v1/resources/{id}/index`.
+
+Los fallos transitorios usan el outbox para reintentar tras 5 y 10 segundos.
+Un documento inválido termina directamente en `FAILED`. Un fallo persistente
+termina en el tercer intento. El motivo se conserva en Azure Table y se
+envía a la DLQ. El relay recupera intentos abandonados cuando caduca la
+reserva. Los checkpoints sobreviven al reinicio del worker si Blob sigue
+disponible.
+
+#### Archivos de la fase 4
+
+| Archivo | Función |
+|---|---|
+| `workers/media/server.py` | Servicio HTTP privado. Recibe el original, limita su tamaño, comprueba el SHA-256 y clasifica errores del extractor. |
+| `workers/media/documents.py` | Selección del extractor, OCR, fragmentación y referencias a páginas, secciones, hojas y celdas. |
+| `workers/media/requirements.txt` | Versiones de las dependencias de extracción usadas por el contenedor. |
+| `workers/media/test_documents.py` | Pruebas de procedencia entre páginas, celdas de CSV y documentos vacíos. |
+| `deploy/docker/media.Dockerfile` | Imagen Python de CPU con PyTorch, dependencias de Docling y los idiomas de Tesseract. |
+| `compose.documents.yaml` | Activa el flujo documental y despliega el extractor, TEI y sus volúmenes de modelos. |
+| `compose.documents.gpu.yaml` | Da acceso a TEI a la GPU NVIDIA seleccionada. |
+| `compose.documents.amd.yaml` | Configura Infinity con PyTorch ROCm y da acceso al dispositivo de cómputo y al nodo gráfico de la GPU AMD. |
+| `deploy/docker/embeddings-rocm.Dockerfile` | Instala Infinity y los paquetes de PyTorch ROCm de la arquitectura AMD detectada. |
+| `deploy/docker/start-rocm-embeddings.sh` | Ejecuta una operación real con ROCm antes de iniciar Infinity. |
+| `deploy/docker/start-documents.sh` | Detecta las GPU desde Docker, espera a que el modelo esté sano y aplica la alternativa de CPU en modo automático. |
+| `Makefile` | Comandos para construir, arrancar, consultar y detener la pila documental. |
+| `internal/documents/clients.go` | Clientes del extractor y de `/v1/embeddings`, con validación de forma y dimensión de vectores. |
+| `internal/documents/configuration.go` | Conecta los adaptadores de almacenamiento e inferencia a partir de la configuración Go. |
+| `internal/documents/pipeline.go` | Checkpoints, llamadas al modelo por lotes, upserts deterministas y publicación del recurso. |
+| `internal/documents/search.go` | Recuperación semántica con aislamiento por tenant, filtro de versión y referencias de origen. |
+| `internal/documents/pipeline_test.go` | Pruebas de recuperación ante caída del modelo y de Qdrant, visibilidad, cancelación y aislamiento. |
+| `internal/ingestion/ingestion.go` | Selecciona trabajos documentales al subir e incorpora el reindexado de originales existentes. |
+| `internal/ingestion/worker.go` | Enruta el trabajo al flujo correspondiente y recupera entregas e intentos interrumpidos. |
+| `internal/ingestion/document_worker.go` | Controla etapas, progreso, reserva, publicación, cancelación y reintentos documentales. |
+| `internal/platform/servicebus/servicebus.go` | Renueva el bloqueo del mensaje durante el trabajo y aplica su liquidación según el resultado. |
+| `internal/platform/config/config.go` | Valida la activación, URLs, revisión del modelo y dimensión esperada. |
+| `internal/platform/httpapi/documents.go` | Implementa búsqueda y reindexado con validación de peticiones. |
+| `internal/platform/httpapi/router.go`, `router_test.go` | Registra los endpoints y conserva la prueba de ruta pendiente sobre `/v1/queries`. |
+| `internal/platform/httpapi/ingestion.go` | Expone tipo de trabajo, etapa de error y versión de índice. Comparte la validación de idempotencia. |
+| `cmd/api/main.go`, `cmd/api/deps.go` | Conectan la búsqueda con la API y preparan el índice de versión en Qdrant. |
+| `cmd/worker/main.go` | Conecta el flujo documental con el worker Go y su cliente de Qdrant. |
+| `internal/storage/job.go`, `resource.go`, `table/table.go` | Persisten la etapa de error, el inicio de publicación y la versión de índice. Admiten filas de fases anteriores. |
+| `internal/storage/payload.go`, `vectorstore.go`, `qdrant/qdrant.go` | Añaden versión al payload y paginación a la búsqueda para filtrar resultados parcialmente publicados. |
+| `contracts/openapi/openapi.yaml` | Contrato público de búsqueda, reindexado y campos adicionales. |
+| `README.md`, `docs/ROADMAP.md`, `docs/adr/0003-motores-de-inferencia.md` | Instrucciones de prueba, estado de fases y decisión del motor local de embeddings. |
+
+### 12.5 Publicación fiable (outbox)
 
 Azure Table Storage no ofrece transacciones entre particiones, pero **sí** permite operaciones de lote atómico dentro de una misma partición. Como `PartitionKey = tenant_id`:
 
@@ -730,7 +812,8 @@ Endpoints previstos, con su estado real en la implementación. **Los endpoints n
 | `GET` | `/v1/resources/{id}` | Consulta de metadatos de un recurso | Implementado |
 | `GET` | `/v1/jobs/{id}` | Estado, progreso y errores de un trabajo | Implementado |
 | `POST` | `/v1/jobs/{id}/cancel` | Cancelación de un trabajo | Implementado |
-| `POST` | `/v1/search` | Búsqueda semántica directa (sin agente) | Fase 4 |
+| `POST` | `/v1/resources/{id}/index` | Indexar un original ya almacenado | Implementado |
+| `POST` | `/v1/search` | Búsqueda semántica directa | Implementado |
 | `POST` | `/v1/queries` | Consulta con Agentic RAG | Fase 5 |
 
 Convenciones transversales: JSON, `X-Request-ID` de entrada y salida, `tenant_id` obligatorio, errores con el mismo esquema (`code`, `message`, `details`, `request_id`), límites de tamaño de petición y de cuerpo, timeouts explícitos.
@@ -745,7 +828,7 @@ Validación realizada contra la documentación oficial de cada motor. Las **vers
 |---|---|---|---|
 | **Cosmos-Embed1** | NVIDIA NIM | ✅ Confirmada | NIM específico (`nvidia/cosmos-embed1`); HTTP/REST compatible con Embeddings de OpenAI; `request_type` = `query`/`bulk_text`/`bulk_video` (hasta 64 ítems por petición en vídeo); requiere GPU NVIDIA (A100/H100/L40S/L4/H20/L20); ~40 GB de VRAM recomendado |
 | **Faster-Whisper** | Python + CTranslate2 | ✅ Confirmada | Reimplementación de Whisper sobre CTranslate2; carga por tamaño (`large-v3`, `distil-large-v3`); convierte modelos Whisper propios. **No expone API REST por sí sola** → se integra mediante worker Python o servidor de transcripción compatible (ver `inference/whisper/`) |
-| **BGE-M3** | FlagEmbedding / vLLM | ✅ Confirmada con matices | FlagEmbedding expone denso, disperso y multivector; vLLM lo soporta como modelo de *pooling* con `--task embed` (recuperación densa). **Las capacidades no son equivalentes entre motores** (ver §11.2) |
+| **BGE-M3** | TEI e Infinity con ROCm en local, vLLM / FlagEmbedding como alternativas de despliegue | ✅ Salida densa validada en CPU y AMD Radeon RX 9060 XT | La fase 4 usa `/v1/embeddings` y 1024 dimensiones. Las salidas dispersas y multivector requieren configurar y validar el motor correspondiente. |
 | **Qwen3-VL** | vLLM | ✅ Confirmada | Soportado (`vllm serve Qwen/Qwen3-VL-8B-Instruct`, también 32B); requiere `--max_model_len` ajustado al presupuesto de VRAM |
 | **Qwen3** | vLLM | ✅ Confirmada | Soportado (`vllm serve Qwen/Qwen3-32B`, `--tensor-parallel-size`); variantes MoE y cuantizadas FP8 validadas. Qwen3-32B en BF16 ≈ 73 GB → GPU de 80 GB o tensor-parallel |
 | **BGE Reranker v2 M3** | FlagEmbedding / vLLM | ✅ Confirmada | Cross-encoder XLM-RoBERTa, 0,6 B, Apache-2.0; FlagEmbedding con `FlagReranker`; vLLM con tarea `score`. Viable en CPU a baja carga |

@@ -1,0 +1,47 @@
+services:
+  embeddings:
+    image: "mar-backend/embeddings-rocm:${MAR_DOCUMENT_AMD_GFX:?No AMD compute architecture selected}"
+    build:
+      context: deploy/docker
+      dockerfile: embeddings-rocm.Dockerfile
+      args:
+        ROCM_GPU_ARCH: "${MAR_DOCUMENT_AMD_GFX}"
+    devices:
+      - /dev/kfd
+      - "${MAR_DOCUMENT_AMD_RENDER:?No AMD render device selected}"
+    user: "10001:${MAR_DOCUMENT_AMD_KFD_GROUP:?No AMD compute group selected}"
+    group_add:
+      - "${MAR_DOCUMENT_AMD_RENDER_GROUP:?No AMD render group selected}"
+    environment:
+      INFINITY_ANONYMOUS_USAGE_STATS: "0"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    volumes:
+      - bge-m3-rocm-model:/data
+    command:
+      - --model-id
+      - BAAI/bge-m3
+      - --revision
+      - "${MAR_MODEL_BGE_M3_REVISION:-5617a9f61b028005a4858fdac845db406aefb181}"
+      - --engine
+      - torch
+      - --pooling-method
+      - cls
+      - --no-trust-remote-code
+      - --no-compile
+      - --no-bettertransformer
+      - --no-vector-disk-cache
+      - --device
+      - cuda
+      - --dtype
+      - float16
+      - --batch-size
+      - "8"
+      - --url-prefix
+      - /v1
+      - --host
+      - 0.0.0.0
+      - --port
+      - "80"
+
+volumes:
+  bge-m3-rocm-model:

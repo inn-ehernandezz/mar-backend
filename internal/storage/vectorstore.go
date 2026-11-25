@@ -110,6 +110,7 @@ type SearchQuery struct {
 	VectorName string
 	Vector     []float32
 	Limit      uint64
+	Offset     uint64
 	Filter     *Filter
 	// WithPayload solicita incluir el payload en los resultados.
 	WithPayload bool

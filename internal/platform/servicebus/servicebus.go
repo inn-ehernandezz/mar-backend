@@ -76,7 +76,31 @@ func handle(ctx context.Context, receiver *azservicebus.Receiver, message *azser
 	var processErr error
 	if json.Unmarshal(message.Body, &event) == nil {
 		logger = logger.With("job_id", event.JobID, "tenant_id", event.TenantID, "request_id", event.RequestID)
-		reason, processErr = service.Process(ctx, event)
+		processCtx, cancel := context.WithCancel(ctx)
+		renewed := make(chan struct{})
+		go func() {
+			defer close(renewed)
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-processCtx.Done():
+					return
+				case <-ticker.C:
+					lockCtx, stop := context.WithTimeout(processCtx, 5*time.Second)
+					err := receiver.RenewMessageLock(lockCtx, message, nil)
+					stop()
+					if err != nil && processCtx.Err() == nil {
+						logger.Warn("se perdió el bloqueo de Service Bus", "error", err)
+						cancel()
+						return
+					}
+				}
+			}
+		}()
+		reason, processErr = service.Process(processCtx, event)
+		cancel()
+		<-renewed
 	}
 
 	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

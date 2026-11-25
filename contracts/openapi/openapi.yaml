@@ -68,7 +68,7 @@ paths:
       tags: [resources]
       summary: Subida de un recurso y creación del trabajo de ingesta
       operationId: createResource
-      description: Guarda el original y añade el trabajo y su mensaje al outbox en una transacción.
+      description: Guarda el original y encola el trabajo. Con la fase 4 habilitada, los formatos documentales admitidos se indexan automáticamente.
       parameters:
         - $ref: "#/components/parameters/TenantID"
         - in: header
@@ -132,6 +132,42 @@ paths:
         "401": {$ref: "#/components/responses/TenantRequired"}
         "404": {$ref: "#/components/responses/NotFound"}
 
+  /v1/resources/{id}/index:
+    post:
+      tags: [resources]
+      summary: Encola el procesamiento de un documento ya almacenado
+      operationId: indexResource
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PathID"
+        - in: header
+          name: Idempotency-Key
+          description: Reutilizar para repetir la petición. Usar una clave nueva para solicitar otro trabajo.
+          schema: {type: string, maxLength: 128}
+      responses:
+        "202":
+          description: Trabajo de indexado aceptado
+          headers:
+            Location:
+              schema: {type: string}
+            Idempotency-Key:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [resource_id, job_id, status]
+                properties:
+                  resource_id: {type: string, format: uuid}
+                  job_id: {type: string, format: uuid}
+                  status: {$ref: "#/components/schemas/JobStatus"}
+        "400": {$ref: "#/components/responses/InvalidArgument"}
+        "401": {$ref: "#/components/responses/TenantRequired"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "503": {$ref: "#/components/responses/StorageUnavailable"}
+
   /v1/jobs/{id}:
     get:
       tags: [jobs]
@@ -166,10 +202,37 @@ paths:
       tags: [search]
       summary: Búsqueda semántica directa, sin agente
       operationId: search
-      description: Pendiente de implementación (Fase 4).
+      description: Busca fragmentos de documentos indexados del tenant con BGE-M3.
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              additionalProperties: false
+              properties:
+                query: {type: string, minLength: 1, maxLength: 1000}
+                limit: {type: integer, minimum: 1, maximum: 50, default: 10}
+                resource_id: {type: string, format: uuid}
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "200":
+          description: Fragmentos ordenados por similitud
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results]
+                properties:
+                  results:
+                    type: array
+                    items: {$ref: "#/components/schemas/SearchHit"}
+        "400": {$ref: "#/components/responses/InvalidArgument"}
+        "401": {$ref: "#/components/responses/TenantRequired"}
+        "413": {$ref: "#/components/responses/TooLarge"}
+        "503": {$ref: "#/components/responses/StorageUnavailable"}
 
   /v1/queries:
     post:
@@ -219,7 +282,7 @@ components:
         application/json:
           schema: {$ref: "#/components/schemas/Error"}
     Conflict:
-      description: Clave reutilizada con otro archivo o estado no cancelable
+      description: Conflicto de idempotencia o de estado del recurso o trabajo
       content:
         application/json:
           schema: {$ref: "#/components/schemas/Error"}
@@ -229,7 +292,7 @@ components:
         application/json:
           schema: {$ref: "#/components/schemas/Error"}
     StorageUnavailable:
-      description: Almacenamiento de ingesta no disponible
+      description: Servicio requerido no disponible o fase documental deshabilitada
       content:
         application/json:
           schema: {$ref: "#/components/schemas/Error"}
@@ -251,15 +314,17 @@ components:
       enum: [PENDING, QUEUED, PROCESSING, COMPLETED, FAILED, CANCELLED]
     Job:
       type: object
-      required: [job_id, resource_id, status, progress, attempts, created_at, updated_at]
+      required: [job_id, resource_id, job_type, status, progress, attempts, created_at, updated_at]
       properties:
         job_id: {type: string, format: uuid}
         resource_id: {type: string, format: uuid}
         status: {$ref: "#/components/schemas/JobStatus"}
+        job_type: {type: string}
         stage: {type: string}
         pipeline: {type: string, enum: [document, image, audio, video]}
         progress: {type: integer, minimum: 0, maximum: 100}
         attempts: {type: integer, minimum: 0}
+        error_stage: {type: string}
         error_code: {type: string}
         error_message: {type: string}
         created_at: {type: string, format: date-time}
@@ -275,9 +340,26 @@ components:
         content_type: {type: string}
         file_size: {type: integer, minimum: 0}
         content_sha256: {type: string}
+        index_version: {type: string}
         status: {type: string, enum: [PENDING, STORED, PROCESSED, FAILED]}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    SearchHit:
+      type: object
+      required: [resource_id, file_name, fragment_id, text, score]
+      properties:
+        resource_id: {type: string, format: uuid}
+        file_name: {type: string}
+        fragment_id: {type: string, format: uuid}
+        text: {type: string}
+        score: {type: number}
+        page: {type: integer, minimum: 1}
+        pages:
+          type: array
+          items: {type: integer, minimum: 1}
+        section: {type: string}
+        sheet: {type: string}
+        cells: {type: string}
     Error:
       type: object
       required: [code, message]

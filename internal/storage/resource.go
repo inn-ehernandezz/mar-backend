@@ -45,6 +45,7 @@ type Resource struct {
 	FileSize      int64
 	BlobPath      string
 	ContentHash   string
+	IndexVersion  string
 	Status        ResourceStatus
 	CreatedAt     time.Time
 	UpdatedAt     time.Time

@@ -1,0 +1,64 @@
+x-document-settings: &document-settings
+  MAR_DOCUMENTS_ENABLED: "true"
+  MAR_DOCUMENT_EXTRACTOR_URL: "http://media:8090"
+  MAR_MODEL_BGE_M3_URL: "${MAR_MODEL_BGE_M3_URL:-http://embeddings:80}"
+  MAR_MODEL_BGE_M3_REVISION: "${MAR_MODEL_BGE_M3_REVISION:-5617a9f61b028005a4858fdac845db406aefb181}"
+
+services:
+  api:
+    environment:
+      <<: *document-settings
+      MAR_SERVICEBUS_ENABLED: "true"
+
+  worker:
+    environment:
+      <<: *document-settings
+      MAR_QDRANT_URL: http://qdrant:6334
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  media:
+    profiles: [documents]
+    build:
+      context: .
+      dockerfile: deploy/docker/media.Dockerfile
+    image: mar-backend/media:dev
+    restart: unless-stopped
+    volumes:
+      - docling-models:/models
+    networks: [mar]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  embeddings:
+    profiles: [documents]
+    image: "${MAR_BGE_M3_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cpu-1.9}"
+    restart: unless-stopped
+    command:
+      - --model-id
+      - BAAI/bge-m3
+      - --revision
+      - "${MAR_MODEL_BGE_M3_REVISION:-5617a9f61b028005a4858fdac845db406aefb181}"
+      - --pooling
+      - cls
+      - --max-client-batch-size
+      - "8"
+    volumes:
+      - bge-m3-model:/data
+    networks: [mar]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "3", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 4s
+      retries: 8
+      start_period: 3m
+
+volumes:
+  docling-models:
+  bge-m3-model:

@@ -1,0 +1,9 @@
+services:
+  embeddings:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${MAR_DOCUMENT_GPU_DEVICE:?No GPU selected}"]
+              capabilities: [gpu]

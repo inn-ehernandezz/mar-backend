@@ -178,6 +178,7 @@ type resourceEntity struct {
 	FileSize      int64  `json:"FileSize"`
 	BlobPath      string `json:"BlobPath"`
 	ContentHash   string `json:"ContentHash"`
+	IndexVersion  string `json:"IndexVersion"`
 	Status        string `json:"Status"`
 	CreatedAt     string `json:"CreatedAt"`
 	UpdatedAt     string `json:"UpdatedAt"`
@@ -320,6 +321,7 @@ func toResourceEntity(res storage.Resource) resourceEntity {
 		FileSize:      res.FileSize,
 		BlobPath:      res.BlobPath,
 		ContentHash:   res.ContentHash,
+		IndexVersion:  res.IndexVersion,
 		Status:        string(res.Status),
 		CreatedAt:     formatTime(res.CreatedAt),
 		UpdatedAt:     formatTime(res.UpdatedAt),
@@ -350,6 +352,7 @@ func fromResourceEntityBytes(raw []byte) (storage.Resource, error) {
 		FileSize:      e.FileSize,
 		BlobPath:      e.BlobPath,
 		ContentHash:   e.ContentHash,
+		IndexVersion:  e.IndexVersion,
 		Status:        storage.ResourceStatus(e.Status),
 		CreatedAt:     createdAt,
 		UpdatedAt:     updatedAt,
@@ -380,6 +383,8 @@ type jobEntity struct {
 	Attempts      int32  `json:"Attempts"`
 	Stage         string `json:"Stage"`
 	Pipeline      string `json:"Pipeline"`
+	ErrorStage    string `json:"ErrorStage"`
+	CommitStarted bool   `json:"CommitStarted"`
 	LeaseUntil    string `json:"LeaseUntil"`
 	DispatchID    string `json:"DispatchID"`
 	DispatchAt    string `json:"DispatchAt"`
@@ -560,6 +565,8 @@ func toJobEntity(job storage.Job) jobEntity {
 		Attempts:      job.Attempts,
 		Stage:         job.Stage,
 		Pipeline:      job.Pipeline,
+		ErrorStage:    job.ErrorStage,
+		CommitStarted: job.CommitStarted,
 		LeaseUntil:    formatSortableTime(job.LeaseUntil),
 		DispatchID:    job.DispatchID,
 		DispatchAt:    formatSortableTime(job.DispatchAt),
@@ -617,6 +624,8 @@ func fromJobEntityBytes(raw []byte) (storage.Job, error) {
 		Attempts:      e.Attempts,
 		Stage:         e.Stage,
 		Pipeline:      e.Pipeline,
+		ErrorStage:    e.ErrorStage,
+		CommitStarted: e.CommitStarted,
 		LeaseUntil:    leaseUntil,
 		DispatchID:    e.DispatchID,
 		DispatchAt:    dispatchAt,

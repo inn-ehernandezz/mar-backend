@@ -1,0 +1,6 @@
+docling==2.81.0
+docling-core==2.108.0
+docling-ibm-models==3.15.0
+docling-parse==5.11.0
+openpyxl==3.1.5
+defusedxml==0.7.1

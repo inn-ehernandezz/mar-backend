@@ -101,7 +101,7 @@ func TestV1RequiresTenant(t *testing.T) {
 func TestV1NotImplemented(t *testing.T) {
 	router := newTestRouter(t, health.NewRegistry(time.Second))
 
-	rec := do(t, router, http.MethodPost, "/v1/search", map[string]string{"X-Tenant-ID": "acme"})
+	rec := do(t, router, http.MethodPost, "/v1/queries", map[string]string{"X-Tenant-ID": "acme"})
 
 	if rec.Code != http.StatusNotImplemented {
 		t.Fatalf("estado = %d, se esperaba 501", rec.Code)

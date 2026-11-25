@@ -127,6 +127,7 @@ func payloadIndexes() []storage.PayloadIndex {
 		{Field: storage.FieldTenantID, Type: storage.IndexKeyword},
 		{Field: storage.FieldResourceID, Type: storage.IndexKeyword},
 		{Field: storage.FieldContentType, Type: storage.IndexKeyword},
+		{Field: storage.FieldIndexVersion, Type: storage.IndexKeyword},
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"mar-backend/internal/documents"
 	"mar-backend/internal/ingestion"
 	"mar-backend/internal/platform/config"
 	"mar-backend/internal/platform/health"
@@ -68,6 +69,10 @@ func run() error {
 
 	service := &ingestion.Service{
 		Objects: deps.Blob, Resources: deps.Table.Resources(), Jobs: deps.Table.Jobs(), RawContainer: cfg.Blob.ContainerRaw,
+	}
+	if cfg.Documents.Enabled {
+		service.DocumentsEnabled = true
+		service.Documents = documents.FromConfig(cfg, deps.Blob, service.Resources, deps.Qdrant)
 	}
 	if cfg.Bus.Enabled {
 		bus, err := servicebus.New(cfg.Bus)

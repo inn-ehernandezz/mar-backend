@@ -35,7 +35,7 @@ func (s *Service) Process(ctx context.Context, event Event) (reason string, err 
 	if err != nil {
 		return "", err
 	}
-	if job.ResourceID != event.ResourceID || job.JobType != jobType {
+	if job.ResourceID != event.ResourceID || !supportedJob(job.JobType) {
 		return "event_job_mismatch", nil
 	}
 	if job.Status.IsTerminal() {
@@ -53,6 +53,10 @@ func (s *Service) Process(ctx context.Context, event Event) (reason string, err 
 	}
 	if event.Attempt != job.Attempts+1 || job.LeaseUntil != nil {
 		return "unexpected_attempt", nil
+	}
+
+	if job.JobType == documentJobType {
+		return s.processDocument(ctx, job, event.Attempt)
 	}
 
 	now := time.Now().UTC()
@@ -133,8 +137,9 @@ func (s *Service) verifyOriginal(ctx context.Context, job storage.Job) (pipeline
 
 func (s *Service) retry(ctx context.Context, job storage.Job, reason string) error {
 	job.LeaseUntil = nil
+	job.ErrorStage = job.Stage
 	job.Stage = "retry_scheduled"
-	job.ErrorCode, job.ErrorMessage = reason, "Se reintentará la verificación del original"
+	job.ErrorCode, job.ErrorMessage = reason, "Se reintentará la etapa del trabajo"
 	delay := 5 * time.Second * (1 << (job.Attempts - 1))
 	_, err := s.enqueue(ctx, job, job.Attempts+1, time.Now().Add(delay), "")
 	return err
@@ -193,13 +198,14 @@ func (r Relay) flush(ctx context.Context, now time.Time) error {
 
 func (r Relay) recover(ctx context.Context, now time.Time) error {
 	return r.Service.Jobs.VisitExpired(ctx, now, func(job storage.Job) error {
-		if job.JobType != jobType || job.Attempts < 1 {
+		if !supportedJob(job.JobType) || job.Attempts < 1 {
 			return nil
 		}
 		var err error
 		if job.Attempts < maxAttempts {
 			err = r.Service.retry(ctx, job, "worker_lease_expired")
 		} else {
+			job.ErrorStage = job.Stage
 			finish(&job, storage.JobFailed, "failed")
 			job.ErrorCode, job.ErrorMessage = "worker_lease_expired", "Se agotaron los intentos de ingesta"
 			// Publish a terminal delivery to retain the exhausted job in the DLQ.
@@ -216,7 +222,7 @@ func (r Relay) recover(ctx context.Context, now time.Time) error {
 // example if Table Storage was unreachable across all broker deliveries.
 func (r Relay) republish(ctx context.Context, now time.Time) error {
 	return r.Service.Jobs.VisitUnclaimed(ctx, now.Add(-10*time.Minute), func(job storage.Job) error {
-		if job.JobType != jobType || job.Attempts >= maxAttempts {
+		if !supportedJob(job.JobType) || job.Attempts >= maxAttempts {
 			return nil
 		}
 		_, err := r.Service.enqueue(ctx, job, job.Attempts+1, now, ":"+ids.New())

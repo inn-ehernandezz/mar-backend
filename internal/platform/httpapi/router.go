@@ -48,9 +48,10 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	{
 		v1.POST("/resources", deps.upload)
 		v1.GET("/resources/:id", deps.getResource)
+		v1.POST("/resources/:id/index", deps.indexResource)
 		v1.GET("/jobs/:id", deps.getJob)
 		v1.POST("/jobs/:id/cancel", deps.cancelJob)
-		v1.POST("/search", notImplementedHandler(deps.Logger, "POST /v1/search"))
+		v1.POST("/search", deps.searchDocuments)
 		v1.POST("/queries", notImplementedHandler(deps.Logger, "POST /v1/queries"))
 	}
 

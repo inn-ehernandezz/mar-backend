@@ -10,18 +10,24 @@ import (
 	"io"
 	"time"
 
+	"mar-backend/internal/documents"
 	"mar-backend/internal/platform/ids"
 	"mar-backend/internal/storage"
 )
 
 const jobType = "ingestion"
+const documentJobType = "document_indexing"
+
+var ErrUnsupportedDocument = errors.New("formato documental no admitido")
 
 type Service struct {
-	Objects      storage.ObjectStore
-	Resources    storage.ResourceRepository
-	Jobs         storage.IngestionJobs
-	RawContainer string
-	WakeRelay    func()
+	Objects          storage.ObjectStore
+	Resources        storage.ResourceRepository
+	Jobs             storage.IngestionJobs
+	RawContainer     string
+	WakeRelay        func()
+	DocumentsEnabled bool
+	Documents        *documents.Pipeline
 }
 
 type Upload struct {
@@ -86,13 +92,37 @@ func (s *Service) Submit(ctx context.Context, upload Upload) (storage.Job, error
 		}
 	}
 
-	job := storage.Job{
-		TenantID: upload.TenantID, JobID: jobID, ResourceID: resourceID, JobType: jobType,
-		Status: storage.JobQueued, Stage: "queued", RequestID: upload.RequestID,
+	kind := jobType
+	if s.DocumentsEnabled && documents.Supported(resource.ContentType) {
+		kind = documentJobType
 	}
-	job, err = s.enqueue(ctx, job, 1, time.Now(), "")
+	return s.queueResource(ctx, resource, jobID, upload.RequestID, kind)
+}
+
+// Index queues an existing original or a new logical attempt after a failed job.
+func (s *Service) Index(ctx context.Context, tenant, resourceID, key, requestID string) (storage.Job, error) {
+	resource, err := s.Resources.Get(ctx, tenant, resourceID)
+	if err != nil {
+		return storage.Job{}, err
+	}
+	if !documents.Supported(resource.ContentType) {
+		return storage.Job{}, ErrUnsupportedDocument
+	}
+	if resource.Status != storage.ResourceStored && resource.Status != storage.ResourceProcessed {
+		return storage.Job{}, storage.ErrConflict
+	}
+	jobID := storage.DeterministicPointID("mar-document", tenant, resourceID, key)
+	return s.queueResource(ctx, resource, jobID, requestID, documentJobType)
+}
+
+func (s *Service) queueResource(ctx context.Context, resource storage.Resource, jobID, requestID, kind string) (storage.Job, error) {
+	job := storage.Job{
+		TenantID: resource.TenantID, JobID: jobID, ResourceID: resource.ResourceID, JobType: kind,
+		Status: storage.JobQueued, Stage: "queued", RequestID: requestID,
+	}
+	job, err := s.enqueue(ctx, job, 1, time.Now(), "")
 	if errors.Is(err, storage.ErrConflict) {
-		job, err = s.Jobs.Get(ctx, upload.TenantID, jobID)
+		job, err = s.Jobs.Get(ctx, resource.TenantID, jobID)
 	}
 	return job, err
 }
@@ -106,10 +136,11 @@ func (s *Service) Cancel(ctx context.Context, tenant, id string) (storage.Job, e
 		if job.Status == storage.JobCancelled {
 			return job, nil
 		}
-		if job.Status.IsTerminal() {
+		if job.Status.IsTerminal() || job.CommitStarted {
 			return storage.Job{}, storage.ErrConflict
 		}
 		finish(&job, storage.JobCancelled, "cancelled")
+		job.ErrorCode, job.ErrorMessage, job.ErrorStage = "", "", ""
 		job, err = s.Jobs.Update(ctx, job, job.ETag)
 		if !errors.Is(err, storage.ErrConflict) && !errors.Is(err, storage.ErrInvalidTransition) {
 			return job, err

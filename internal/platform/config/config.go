@@ -42,6 +42,7 @@ type Config struct {
 	Table     TableConfig
 	Bus       BusConfig
 	Inference InferenceConfig
+	Documents DocumentConfig
 }
 
 // ServerConfig agrupa los parámetros del servidor HTTP.
@@ -129,6 +130,12 @@ type BusConfig struct {
 	MaxConcurrent      int
 }
 
+type DocumentConfig struct {
+	Enabled       bool
+	ExtractorURL  string
+	ModelRevision string
+}
+
 // InferenceConfig describe los endpoints de los motores de inferencia.
 // Los nombres son lógicos: cambiar de motor no afecta a la lógica de negocio.
 type InferenceConfig struct {
@@ -204,6 +211,9 @@ func Load() (Config, error) {
 	cfg.Bus.TopicNotifications = getString("MAR_SERVICEBUS_TOPIC_NOTIFICATIONS", cfg.Bus.TopicNotifications)
 	cfg.Bus.MaxConcurrent = getInt("MAR_SERVICEBUS_MAX_CONCURRENT", cfg.Bus.MaxConcurrent)
 
+	cfg.Documents.Enabled = getBool("MAR_DOCUMENTS_ENABLED", cfg.Documents.Enabled)
+	cfg.Documents.ExtractorURL = getString("MAR_DOCUMENT_EXTRACTOR_URL", cfg.Documents.ExtractorURL)
+	cfg.Documents.ModelRevision = getString("MAR_MODEL_BGE_M3_REVISION", cfg.Documents.ModelRevision)
 	cfg.Inference.MockEnabled = getBool("MAR_INFERENCE_MOCK_ENABLED", cfg.Inference.MockEnabled)
 	cfg.Inference.Qwen3URL = getString("MAR_MODEL_QWEN3_URL", cfg.Inference.Qwen3URL)
 	cfg.Inference.Qwen3VisionURL = getString("MAR_MODEL_QWEN3_VL_URL", cfg.Inference.Qwen3VisionURL)
@@ -401,6 +411,25 @@ func (c Config) Validate() error {
 	}
 
 	// Inferencia.
+	if c.Documents.Enabled {
+		for name, value := range map[string]string{
+			"MAR_DOCUMENT_EXTRACTOR_URL": c.Documents.ExtractorURL,
+			"MAR_MODEL_BGE_M3_URL":       c.Inference.BGEM3URL,
+		} {
+			u, err := url.Parse(value)
+			if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+				errs = append(errs, fmt.Errorf("%s debe ser una URL base HTTP o HTTPS", name))
+			}
+		}
+		if len(c.Documents.ModelRevision) != 40 || strings.ContainsFunc(c.Documents.ModelRevision, func(r rune) bool {
+			return !strings.ContainsRune("0123456789abcdef", r)
+		}) {
+			errs = append(errs, errors.New("MAR_MODEL_BGE_M3_REVISION debe ser el SHA de 40 caracteres de los pesos"))
+		}
+		if c.Qdrant.TextCollectionVectorSize != 1024 {
+			errs = append(errs, errors.New("BGE-M3 requiere MAR_QDRANT_TEXT_VECTOR_SIZE=1024"))
+		}
+	}
 	if c.Inference.MockEnabled && c.IsProduction() {
 		errs = append(errs, errors.New(
 			"MAR_INFERENCE_MOCK_ENABLED no está permitido en producción: los resultados serían ficticios"))

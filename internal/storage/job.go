@@ -72,6 +72,8 @@ type Job struct {
 	Attempts      int32
 	Stage         string
 	Pipeline      string
+	ErrorStage    string
+	CommitStarted bool
 	LeaseUntil    *time.Time
 	DispatchID    string
 	DispatchAt    *time.Time

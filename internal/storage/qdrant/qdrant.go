@@ -222,6 +222,7 @@ func (s *Store) Search(ctx context.Context, collection string, query storage.Sea
 		CollectionName: collection,
 		Query:          qdr.NewQueryDense(query.Vector),
 		Limit:          &limit,
+		Offset:         &query.Offset,
 		WithPayload:    qdr.NewWithPayload(query.WithPayload),
 	}
 	if query.VectorName != "" {

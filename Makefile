@@ -1,9 +1,10 @@
 SHELL := /bin/bash
 GO ?= go
+DOCUMENTS_COMPOSE := docker compose -f compose.yaml -f compose.documents.yaml --profile app --profile messaging --profile documents
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build run run-worker test race fmt vet tidy verify up up-full up-ingestion down ps logs image
+.PHONY: help build run run-worker test race fmt vet tidy verify up up-full up-ingestion up-documents up-document-models stop-documents documents-ps documents-logs down ps logs image
 
 help: ## Muestra esta ayuda
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -45,6 +46,21 @@ up-full: image ## Construye y levanta la pila completa, incluido el backend Go
 
 up-ingestion: image ## Levanta la pila completa con Service Bus y worker
 	MAR_SERVICEBUS_ENABLED=true docker compose --profile app --profile messaging up -d
+
+up-documents: ## Levanta la fase documental con detección de GPU para BGE-M3
+	bash deploy/docker/start-documents.sh all $(DOCUMENTS_COMPOSE)
+
+up-document-models: ## Levanta el extractor y BGE-M3 con detección de GPU
+	bash deploy/docker/start-documents.sh models $(DOCUMENTS_COMPOSE)
+
+stop-documents: ## Detiene la fase documental conservando contenedores y datos
+	$(DOCUMENTS_COMPOSE) stop
+
+documents-ps: ## Muestra el estado de la pila documental
+	$(DOCUMENTS_COMPOSE) ps
+
+documents-logs: ## Sigue los registros del worker, el extractor y el modelo
+	$(DOCUMENTS_COMPOSE) logs -f api worker media embeddings
 
 image: ## Construye la imagen Docker del backend
 	docker compose --profile app build api

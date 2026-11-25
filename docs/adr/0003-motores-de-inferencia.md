@@ -31,7 +31,7 @@ Servir cada modelo con un **motor de inferencia estándar** y acceder a él desd
 |---|---|---|
 | Cosmos-Embed1 | NVIDIA NIM | Microservicio oficial del modelo; API REST compatible con Embeddings de OpenAI |
 | Faster-Whisper | Python + CTranslate2 | Motor nativo del modelo. **La librería no expone API REST**, por lo que se integra como worker/servidor de transcripción (excepción explícita y acotada a la regla de no crear servidores propios) |
-| BGE-M3 | FlagEmbedding o vLLM | vLLM lo soporta como modelo de *pooling* (`--task embed`); FlagEmbedding expone denso, disperso y multivector |
+| BGE-M3 | Text Embeddings Inference en NVIDIA y CPU. Infinity con PyTorch ROCm en AMD. vLLM o FlagEmbedding según el despliegue | Los motores locales sirven embeddings densos mediante `/v1/embeddings`. vLLM y FlagEmbedding pueden exponer salidas adicionales según la configuración. |
 | Qwen3-VL | vLLM | Soportado oficialmente |
 | Qwen3 | vLLM | Soportado oficialmente; variantes MoE y FP8 validadas |
 | BGE Reranker v2 M3 | FlagEmbedding o vLLM | FlagEmbedding (`FlagReranker`) o vLLM con tarea `score` |
@@ -61,4 +61,4 @@ Los endpoints se configuran por **nombre lógico** (`MAR_MODEL_QWEN3_URL`), no p
 
 ## Pendiente
 
-Fijar versiones concretas de pesos y motores, y validar licencias, endpoints, formatos y requisitos de hardware. Queda registrado en `docs/ROADMAP.md`.
+La fase 4 fija BGE-M3 en la revisión `5617a9f61b028005a4858fdac845db406aefb181` para la búsqueda densa local. El arranque prueba TEI 1.9 en NVIDIA, Infinity en AMD y TEI en CPU según los dispositivos disponibles. Queda por fijar el despliegue de producción y las revisiones de los modelos de fases posteriores en `docs/ROADMAP.md`.
