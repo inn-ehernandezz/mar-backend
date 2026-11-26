@@ -1,0 +1,14 @@
+x-rocm: &rocm
+  image: "${MAR_RAG_AMD_IMAGE:-vllm/vllm-openai-rocm:v0.17.1}"
+  devices:
+    - /dev/kfd
+    - "${MAR_DOCUMENT_AMD_RENDER:?No AMD render device selected}"
+  user: "0:${MAR_DOCUMENT_AMD_KFD_GROUP:?No AMD compute group selected}"
+  group_add:
+    - "${MAR_DOCUMENT_AMD_RENDER_GROUP:?No AMD render group selected}"
+
+services:
+  qwen3-gpu:
+    <<: *rocm
+  reranker-gpu:
+    <<: *rocm

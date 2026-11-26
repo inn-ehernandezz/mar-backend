@@ -237,12 +237,48 @@ paths:
   /v1/queries:
     post:
       tags: [queries]
-      summary: Consulta con Agentic RAG
+      summary: Responde una pregunta con fuentes documentales
       operationId: query
-      description: Pendiente de implementación (Fase 5).
+      description: Recupera y reordena fragmentos del tenant antes de generar una respuesta. Puede realizar búsquedas adicionales dentro del mismo ámbito.
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [query]
+              properties:
+                query: {type: string, minLength: 1, maxLength: 1000}
+                resource_id:
+                  type: string
+                  format: uuid
+                  description: Limita toda la consulta a este recurso del tenant.
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "200":
+          description: Respuesta con referencias a las fuentes recuperadas, o indicación de evidencia insuficiente.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/QueryAnswer"}
+        "400": {$ref: "#/components/responses/InvalidArgument"}
+        "401": {$ref: "#/components/responses/TenantRequired"}
+        "413":
+          description: El cuerpo de la consulta supera 16 KiB.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: Consultas deshabilitadas, o un servidor de inferencia o recuperación no está disponible.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "504":
+          description: Se agotó el tiempo para responder.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
 
 components:
   parameters:
@@ -301,13 +337,6 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/Error"}
-    NotImplemented:
-      description: La operación está declarada pero aún no implementada
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-
   schemas:
     JobStatus:
       type: string
@@ -360,13 +389,39 @@ components:
         section: {type: string}
         sheet: {type: string}
         cells: {type: string}
+    QueryAnswer:
+      type: object
+      required: [status, answer, sources]
+      properties:
+        status:
+          type: string
+          enum: [answered, insufficient_evidence]
+        answer: {type: string}
+        sources:
+          type: array
+          items: {$ref: "#/components/schemas/QuerySource"}
+    QuerySource:
+      type: object
+      required: [resource_id, file_name, fragment_id, text]
+      properties:
+        resource_id: {type: string, format: uuid}
+        file_name: {type: string}
+        fragment_id: {type: string, format: uuid}
+        text: {type: string}
+        page: {type: integer, minimum: 1}
+        pages:
+          type: array
+          items: {type: integer, minimum: 1}
+        section: {type: string}
+        sheet: {type: string}
+        cells: {type: string}
     Error:
       type: object
       required: [code, message]
       properties:
         code:
           type: string
-          example: not_implemented
+          example: invalid_argument
         message:
           type: string
         details:

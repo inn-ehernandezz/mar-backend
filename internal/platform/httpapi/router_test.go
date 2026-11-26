@@ -98,16 +98,16 @@ func TestV1RequiresTenant(t *testing.T) {
 	}
 }
 
-func TestV1NotImplemented(t *testing.T) {
+func TestQueriesWithoutModels(t *testing.T) {
 	router := newTestRouter(t, health.NewRegistry(time.Second))
 
 	rec := do(t, router, http.MethodPost, "/v1/queries", map[string]string{"X-Tenant-ID": "acme"})
 
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("estado = %d, se esperaba 501", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("estado = %d, se esperaba 503", rec.Code)
 	}
-	if got := decodeError(t, rec).Code; got != "not_implemented" {
-		t.Errorf("código = %q, se esperaba not_implemented", got)
+	if got := decodeError(t, rec).Code; got != "unavailable" {
+		t.Errorf("código = %q, se esperaba unavailable", got)
 	}
 }
 

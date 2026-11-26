@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -17,8 +18,10 @@ import (
 	"mar-backend/internal/platform/config"
 	"mar-backend/internal/platform/health"
 	"mar-backend/internal/platform/httpapi"
+	"mar-backend/internal/platform/inference"
 	"mar-backend/internal/platform/logging"
 	"mar-backend/internal/platform/servicebus"
+	"mar-backend/internal/rag"
 )
 
 func main() {
@@ -74,6 +77,27 @@ func run() error {
 		service.DocumentsEnabled = true
 		service.Documents = documents.FromConfig(cfg, deps.Blob, service.Resources, deps.Qdrant)
 	}
+	var queries *rag.Service
+	if service.Documents != nil && cfg.Inference.Qwen3URL != "" && cfg.Inference.RerankerURL != "" {
+		models := cfg.Inference
+		client := &http.Client{
+			Timeout: models.RequestTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+		queries = &rag.Service{
+			Search: service.Documents,
+			Chat: rag.HTTPChat{ModelEndpoint: rag.ModelEndpoint{
+				URL: models.Qwen3URL, Model: models.Qwen3Model, APIKey: models.Qwen3APIKey,
+				Client: client, GPU: inference.NewGPU(models.Qwen3GPUURL, 2), MaxResponseBytes: models.MaxResponseBytes,
+			}},
+			Ranker: rag.HTTPReranker{ModelEndpoint: rag.ModelEndpoint{
+				URL: models.RerankerURL, Model: models.RerankerModel, APIKey: models.RerankerAPIKey,
+				Client: client, GPU: inference.NewGPU(models.RerankerGPUURL, 1), MaxResponseBytes: models.MaxResponseBytes,
+			}},
+		}
+	}
 	if cfg.Bus.Enabled {
 		bus, err := servicebus.New(cfg.Bus)
 		if err != nil {
@@ -107,6 +131,7 @@ func run() error {
 		Logger:    logger,
 		Health:    checks,
 		Ingestion: service,
+		Queries:   queries,
 	})
 	server := httpapi.NewServer(cfg, router, logger)
 

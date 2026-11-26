@@ -1,0 +1,14 @@
+x-cuda: &cuda
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            device_ids: ["${MAR_DOCUMENT_GPU_DEVICE:?No NVIDIA GPU selected}"]
+            capabilities: [gpu]
+
+services:
+  qwen3-gpu:
+    <<: *cuda
+  reranker-gpu:
+    <<: *cuda

@@ -143,9 +143,16 @@ type InferenceConfig struct {
 	MockEnabled bool
 
 	Qwen3URL         string
+	Qwen3GPUURL      string
+	Qwen3Model       string
+	Qwen3APIKey      string
 	Qwen3VisionURL   string
 	BGEM3URL         string
+	BGEM3CPUURL      string
 	RerankerURL      string
+	RerankerGPUURL   string
+	RerankerModel    string
+	RerankerAPIKey   string
 	WhisperURL       string
 	CosmosEmbed1URL  string
 	RequestTimeout   time.Duration
@@ -216,9 +223,16 @@ func Load() (Config, error) {
 	cfg.Documents.ModelRevision = getString("MAR_MODEL_BGE_M3_REVISION", cfg.Documents.ModelRevision)
 	cfg.Inference.MockEnabled = getBool("MAR_INFERENCE_MOCK_ENABLED", cfg.Inference.MockEnabled)
 	cfg.Inference.Qwen3URL = getString("MAR_MODEL_QWEN3_URL", cfg.Inference.Qwen3URL)
+	cfg.Inference.Qwen3GPUURL = getString("MAR_MODEL_QWEN3_GPU_URL", cfg.Inference.Qwen3GPUURL)
+	cfg.Inference.Qwen3Model = getString("MAR_MODEL_QWEN3_NAME", cfg.Inference.Qwen3Model)
+	cfg.Inference.Qwen3APIKey = getString("MAR_MODEL_QWEN3_API_KEY", cfg.Inference.Qwen3APIKey)
 	cfg.Inference.Qwen3VisionURL = getString("MAR_MODEL_QWEN3_VL_URL", cfg.Inference.Qwen3VisionURL)
 	cfg.Inference.BGEM3URL = getString("MAR_MODEL_BGE_M3_URL", cfg.Inference.BGEM3URL)
+	cfg.Inference.BGEM3CPUURL = getString("MAR_MODEL_BGE_M3_CPU_URL", cfg.Inference.BGEM3CPUURL)
 	cfg.Inference.RerankerURL = getString("MAR_MODEL_RERANKER_URL", cfg.Inference.RerankerURL)
+	cfg.Inference.RerankerGPUURL = getString("MAR_MODEL_RERANKER_GPU_URL", cfg.Inference.RerankerGPUURL)
+	cfg.Inference.RerankerModel = getString("MAR_MODEL_RERANKER_NAME", cfg.Inference.RerankerModel)
+	cfg.Inference.RerankerAPIKey = getString("MAR_MODEL_RERANKER_API_KEY", cfg.Inference.RerankerAPIKey)
 	cfg.Inference.WhisperURL = getString("MAR_MODEL_WHISPER_URL", cfg.Inference.WhisperURL)
 	cfg.Inference.CosmosEmbed1URL = getString("MAR_MODEL_COSMOS_EMBED1_URL", cfg.Inference.CosmosEmbed1URL)
 	cfg.Inference.RequestTimeout = getDuration("MAR_MODEL_REQUEST_TIMEOUT", cfg.Inference.RequestTimeout)
@@ -282,6 +296,8 @@ func defaults() Config {
 			MaxConcurrent:  1,
 		},
 		Inference: InferenceConfig{
+			Qwen3Model:       "Qwen/Qwen3-1.7B",
+			RerankerModel:    "BAAI/bge-reranker-v2-m3",
 			RequestTimeout:   120 * time.Second,
 			MaxResponseBytes: 8 << 20,
 		},
@@ -435,15 +451,42 @@ func (c Config) Validate() error {
 			"MAR_INFERENCE_MOCK_ENABLED no está permitido en producción: los resultados serían ficticios"))
 	}
 	for name, value := range map[string]string{
-		"MAR_MODEL_QWEN3_URL":         c.Inference.Qwen3URL,
 		"MAR_MODEL_QWEN3_VL_URL":      c.Inference.Qwen3VisionURL,
 		"MAR_MODEL_BGE_M3_URL":        c.Inference.BGEM3URL,
-		"MAR_MODEL_RERANKER_URL":      c.Inference.RerankerURL,
 		"MAR_MODEL_WHISPER_URL":       c.Inference.WhisperURL,
 		"MAR_MODEL_COSMOS_EMBED1_URL": c.Inference.CosmosEmbed1URL,
 	} {
 		if err := validateOptionalURL(name, value); err != nil {
 			errs = append(errs, err)
+		}
+	}
+	for _, model := range []struct{ env, endpoint, name string }{
+		{"MAR_MODEL_QWEN3", c.Inference.Qwen3URL, c.Inference.Qwen3Model},
+		{"MAR_MODEL_RERANKER", c.Inference.RerankerURL, c.Inference.RerankerModel},
+	} {
+		if model.endpoint == "" {
+			continue
+		}
+		if err := validateModelBaseURL(model.env+"_URL", model.endpoint); err != nil {
+			errs = append(errs, err)
+		}
+		if model.name == "" {
+			errs = append(errs, fmt.Errorf("%s_NAME no puede estar vacío si se configura el servidor", model.env))
+		}
+	}
+	for _, alternate := range []struct{ env, endpoint, base string }{
+		{"MAR_MODEL_QWEN3_GPU_URL", c.Inference.Qwen3GPUURL, c.Inference.Qwen3URL},
+		{"MAR_MODEL_RERANKER_GPU_URL", c.Inference.RerankerGPUURL, c.Inference.RerankerURL},
+		{"MAR_MODEL_BGE_M3_CPU_URL", c.Inference.BGEM3CPUURL, c.Inference.BGEM3URL},
+	} {
+		if alternate.endpoint == "" {
+			continue
+		}
+		if err := validateModelBaseURL(alternate.env, alternate.endpoint); err != nil {
+			errs = append(errs, err)
+		}
+		if alternate.base == "" {
+			errs = append(errs, fmt.Errorf("%s requiere el endpoint principal del modelo", alternate.env))
 		}
 	}
 	errs = append(errs, requirePositiveDuration("MAR_MODEL_REQUEST_TIMEOUT", c.Inference.RequestTimeout))
@@ -594,6 +637,15 @@ func looksLocalEndpoint(value string) bool {
 		}
 	}
 	return false
+}
+
+func validateModelBaseURL(name, value string) error {
+	u, err := url.Parse(value)
+	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") ||
+		u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return fmt.Errorf("%s debe ser una URL base HTTP o HTTPS", name)
+	}
+	return nil
 }
 
 func validateOptionalURL(name, value string) error {

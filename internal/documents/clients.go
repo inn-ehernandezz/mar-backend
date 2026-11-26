@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"mar-backend/internal/platform/inference"
 	"mar-backend/internal/storage"
 )
 
@@ -54,7 +55,7 @@ func (e HTTPExtractor) Extract(ctx context.Context, resource storage.Resource, b
 	var out struct {
 		Fragments []Fragment `json:"fragments"`
 	}
-	if err := requestJSON(e.Client, req, e.MaxResponseBytes, &out); err != nil {
+	if err := requestJSON(e.Client.Do, req, e.MaxResponseBytes, &out); err != nil {
 		return nil, err
 	}
 	return out.Fragments, nil
@@ -63,6 +64,7 @@ func (e HTTPExtractor) Extract(ctx context.Context, resource storage.Resource, b
 type HTTPEmbedder struct {
 	URL              string
 	Client           *http.Client
+	GPU              *inference.GPU
 	MaxResponseBytes int64
 }
 
@@ -85,7 +87,10 @@ func (e HTTPEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, e
 			Embedding []float32 `json:"embedding"`
 		} `json:"data"`
 	}
-	if err := requestJSON(e.Client, req, e.MaxResponseBytes, &out); err != nil {
+	do := func(request *http.Request) (*http.Response, error) {
+		return e.GPU.Do(e.Client, request, "/v1/embeddings")
+	}
+	if err := requestJSON(do, req, e.MaxResponseBytes, &out); err != nil {
 		return nil, err
 	}
 	vectors := make([][]float32, len(texts))
@@ -123,8 +128,8 @@ func validateVectors(vectors [][]float32, count int) error {
 	return nil
 }
 
-func requestJSON(client *http.Client, req *http.Request, limit int64, target any) error {
-	response, err := client.Do(req)
+func requestJSON(do func(*http.Request) (*http.Response, error), req *http.Request, limit int64, target any) error {
+	response, err := do(req)
 	if err != nil {
 		return err
 	}

@@ -5,10 +5,17 @@ import (
 	"time"
 
 	"mar-backend/internal/platform/config"
+	"mar-backend/internal/platform/inference"
 	"mar-backend/internal/storage"
 )
 
 func FromConfig(cfg config.Config, objects storage.ObjectStore, resources storage.ResourceRepository, vectors storage.VectorStore) *Pipeline {
+	embeddingURL := cfg.Inference.BGEM3URL
+	var accelerator *inference.GPU
+	if cfg.Inference.BGEM3CPUURL != "" {
+		embeddingURL = cfg.Inference.BGEM3CPUURL
+		accelerator = inference.NewGPU(cfg.Inference.BGEM3URL, 2)
+	}
 	return &Pipeline{
 		Objects: objects, Resources: resources, Vectors: vectors,
 		RawContainer: cfg.Blob.ContainerRaw, DerivedContainer: cfg.Blob.ContainerDerived,
@@ -18,7 +25,7 @@ func FromConfig(cfg config.Config, objects storage.ObjectStore, resources storag
 			MaxResponseBytes: checkpointLimit,
 		},
 		Embed: HTTPEmbedder{
-			URL: cfg.Inference.BGEM3URL, Client: &http.Client{Timeout: cfg.Inference.RequestTimeout},
+			URL: embeddingURL, Client: &http.Client{Timeout: cfg.Inference.RequestTimeout}, GPU: accelerator,
 			MaxResponseBytes: cfg.Inference.MaxResponseBytes,
 		},
 	}

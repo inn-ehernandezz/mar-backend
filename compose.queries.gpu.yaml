@@ -1,0 +1,84 @@
+x-gpu-model: &gpu-model
+  profiles: [query-gpu]
+  restart: unless-stopped
+  networks: [mar]
+  environment:
+    HF_HOME: /models
+    HF_HUB_DISABLE_TELEMETRY: "1"
+    VLLM_NO_USAGE_STATS: "1"
+  volumes:
+    - query-models:/models
+  labels:
+    mar.gpu.device: "${MAR_RAG_GPU_DEVICE:-}"
+  shm_size: 1gb
+  healthcheck:
+    test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+    interval: 10s
+    timeout: 5s
+    retries: 10
+    start_period: 5m
+
+services:
+  qwen3-gpu:
+    <<: *gpu-model
+    image: "${MAR_RAG_NVIDIA_IMAGE:-vllm/vllm-openai:v0.17.1}"
+    command:
+      - "${MAR_MODEL_QWEN3_NAME:-Qwen/Qwen3-1.7B}"
+      - --dtype
+      - float16
+      - --max-model-len
+      - "8192"
+      - --max-num-seqs
+      - "2"
+      - --enforce-eager
+      - --gpu-memory-utilization
+      - "${MAR_RAG_GPU_MEMORY_FRACTION:-0.40}"
+      - --kv-cache-memory-bytes
+      - "1073741824"
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - hermes
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking":false}'
+
+  reranker-gpu:
+    <<: *gpu-model
+    image: "${MAR_RAG_NVIDIA_IMAGE:-vllm/vllm-openai:v0.17.1}"
+    command:
+      - "${MAR_MODEL_RERANKER_NAME:-BAAI/bge-reranker-v2-m3}"
+      - --runner
+      - pooling
+      - --dtype
+      - float16
+      - --max-model-len
+      - "4096"
+      - --max-num-seqs
+      - "16"
+      - --enforce-eager
+      - --gpu-memory-utilization
+      - "${MAR_RAG_GPU_MEMORY_FRACTION:-0.20}"
+
+  embeddings-cpu:
+    profiles: [query-backup]
+    image: "${MAR_BGE_M3_CPU_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cpu-1.9}"
+    restart: unless-stopped
+    command:
+      - --model-id
+      - BAAI/bge-m3
+      - --revision
+      - "${MAR_MODEL_BGE_M3_REVISION:-5617a9f61b028005a4858fdac845db406aefb181}"
+      - --pooling
+      - cls
+      - --max-client-batch-size
+      - "8"
+    volumes:
+      - bge-m3-model:/data
+    networks: [mar]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "3", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 4s
+      retries: 8
+      start_period: 3m

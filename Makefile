@@ -1,10 +1,12 @@
 SHELL := /bin/bash
 GO ?= go
 DOCUMENTS_COMPOSE := docker compose -f compose.yaml -f compose.documents.yaml --profile app --profile messaging --profile documents
+QUERIES_COMPOSE := $(DOCUMENTS_COMPOSE) -f compose.queries.yaml -f compose.queries.gpu.yaml --profile queries
+ALL_QUERY_MODELS := $(QUERIES_COMPOSE) --profile query-gpu --profile query-backup
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build run run-worker test race fmt vet tidy verify up up-full up-ingestion up-documents up-document-models stop-documents documents-ps documents-logs down ps logs image
+.PHONY: help build run run-worker test race fmt vet tidy verify up up-full up-ingestion up-documents up-document-models stop-documents documents-ps documents-logs up-queries stop-queries queries-ps down ps logs image
 
 help: ## Muestra esta ayuda
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -61,6 +63,15 @@ documents-ps: ## Muestra el estado de la pila documental
 
 documents-logs: ## Sigue los registros del worker, el extractor y el modelo
 	$(DOCUMENTS_COMPOSE) logs -f api worker media embeddings
+
+up-queries: ## Levanta la fase 5 con preferencia por GPU y respaldo en CPU
+	bash deploy/docker/start-documents.sh queries $(QUERIES_COMPOSE)
+
+stop-queries: ## Detiene toda la pila de la fase 5 conservando los datos
+	$(ALL_QUERY_MODELS) stop
+
+queries-ps: ## Muestra el estado de la pila de la fase 5
+	$(ALL_QUERY_MODELS) ps
 
 image: ## Construye la imagen Docker del backend
 	docker compose --profile app build api

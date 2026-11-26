@@ -10,6 +10,7 @@ import (
 	"mar-backend/internal/platform/apierr"
 	"mar-backend/internal/platform/config"
 	"mar-backend/internal/platform/health"
+	"mar-backend/internal/rag"
 )
 
 // RouterDeps agrupa las dependencias necesarias para construir el enrutador.
@@ -18,11 +19,11 @@ type RouterDeps struct {
 	Logger    *slog.Logger
 	Health    *health.Registry
 	Ingestion *ingestion.Service
+	Queries   *rag.Service
 }
 
 // NewRouter construye el enrutador HTTP con los middleware transversales y las
-// rutas de la API. Las rutas cuyo caso de uso aún no existe responden de forma
-// explícita con 501 Not Implemented: nunca se devuelven resultados ficticios.
+// rutas de la API.
 func NewRouter(deps RouterDeps) *gin.Engine {
 	if deps.Config.Env != config.EnvDevelopment {
 		gin.SetMode(gin.ReleaseMode)
@@ -52,7 +53,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/jobs/:id", deps.getJob)
 		v1.POST("/jobs/:id/cancel", deps.cancelJob)
 		v1.POST("/search", deps.searchDocuments)
-		v1.POST("/queries", notImplementedHandler(deps.Logger, "POST /v1/queries"))
+		v1.POST("/queries", deps.queryDocuments)
 	}
 
 	router.NoRoute(noRouteHandler(deps.Logger))
@@ -83,14 +84,6 @@ func readyHandler(registry *health.Registry) gin.HandlerFunc {
 			status = http.StatusServiceUnavailable
 		}
 		c.JSON(status, report)
-	}
-}
-
-func notImplementedHandler(logger *slog.Logger, endpoint string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		respondError(c, logger, apierr.
-			NotImplemented(endpoint+" aún no está implementado").
-			WithOp(endpoint))
 	}
 }
 

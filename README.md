@@ -19,7 +19,7 @@ context-aware responses through a scalable and modular architecture.
 | 2 | Persistence and Storage | ✅ Completed |
 | 3 | Data Ingestion and Asynchronous Processing | ✅ Completed |
 | 4 | Document Processing and AI | ✅ Completed |
-| 5 | Agentic RAG | 🔵 Next |
+| 5 | Agentic RAG | ✅ Implemented for documents |
 | 6 | Multimodal Processing | ⏳ Pending |
 | 7 | Evolution Towards Microservices | ⏳ Pending |
 
@@ -415,3 +415,58 @@ job
 Use a fixed `Idempotency-Key` if you want to repeat this enqueue request and
 recover the same new job ID. For another processing attempt, send a new key
 or omit the header.
+
+## Phase 5 document queries
+
+`POST /v1/queries` reuses the documents already indexed by phase 4.
+BGE Reranker v2 M3 reorders the retrieved passages. Qwen3 writes an answer
+from those passages, and MAR resolves the cited sources to their document,
+fragment, and page or sheet. The model can request another search or the full
+text of a source within the original tenant and resource scope. Each
+request allows up to two tool calls during evidence retrieval. MAR checks
+each selected quotation against the indexed text and verifies whether the
+quotations answer the exact question before asking Qwen3 to write a response.
+
+On a local x86-64 machine, run these commands from the repository root:
+
+```bash
+export DOCKER_CONTEXT=default
+make up-queries
+make queries-ps
+```
+
+The phase 5 Compose overlay starts Qwen3-1.7B and BGE Reranker v2 M3 on CPU
+using vLLM. Their first startup downloads model weights. BGE-M3 uses the
+accelerator chosen by the existing phase 4 startup script. The two new model
+servers are reachable only on the Compose network.
+
+In Postman, send `POST http://localhost:18082/v1/queries` with the same
+`X-Tenant-ID` used to upload the PDF and select **Body → raw → JSON**.
+Replace the example UUID with the real `resource_id`:
+
+```json
+{
+  "query": "¿Qué pasa si borro los originales y luego quiero rehacer el índice?",
+  "resource_id": "1bdd98eb-fe02-5078-87d6-a32d52a2d44d"
+}
+```
+
+The response includes `status`, `answer` and `sources`. For the MAR
+architecture proposal, check that the answer explains that the original
+files must be requested again, and confirm the citation in the PDF. Ask
+how much the deployment costs per month to check the
+`insufficient_evidence` response with an empty source list.
+Omit `resource_id` to query across the tenant's indexed documents.
+
+For an API running directly on the host or in a custom deployment, set
+`MAR_MODEL_QWEN3_URL` and `MAR_MODEL_RERANKER_URL` to the base URLs of the
+model servers. MAR appends `/v1/chat/completions` and `/rerank` respectively.
+The chat server must support automatic function calling and JSON Schema output
+for Qwen3. Set the matching `MAR_MODEL_QWEN3_NAME` and
+`MAR_MODEL_RERANKER_NAME` when they differ from the defaults, and pass
+`MAR_MODEL_QWEN3_API_KEY` and `MAR_MODEL_RERANKER_API_KEY` if the model
+servers require bearer authentication. Allow enough time for the query
+using `MAR_HTTP_REQUEST_TIMEOUT` and a longer `MAR_HTTP_WRITE_TIMEOUT`.
+The local Compose overlay uses 90 and 100 seconds respectively.
+
+Use `make stop-queries` to stop the full phase 5 stack and retain its data.

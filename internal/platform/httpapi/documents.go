@@ -50,19 +50,7 @@ func (deps RouterDeps) searchDocuments(c *gin.Context) {
 		Limit      *int   `json:"limit"`
 		ResourceID string `json:"resource_id"`
 	}
-	body := http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
-	decoder := json.NewDecoder(body)
-	decoder.DisallowUnknownFields()
-	err := decoder.Decode(&request)
-	if err == nil {
-		var extra any
-		err = decoder.Decode(&extra)
-		if errors.Is(err, io.EOF) {
-			err = nil
-		} else if err == nil {
-			err = errors.New("varios valores JSON")
-		}
-	}
+	err := decodeDocumentRequest(c, &request)
 	if err != nil {
 		var limit *http.MaxBytesError
 		if errors.As(err, &limit) {
@@ -89,4 +77,22 @@ func (deps RouterDeps) searchDocuments(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"results": results})
+}
+
+func decodeDocumentRequest(c *gin.Context, target any) error {
+	body := http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
+	decoder := json.NewDecoder(body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra json.RawMessage
+	err := decoder.Decode(&extra)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err == nil {
+		return errors.New("varios valores JSON")
+	}
+	return err
 }

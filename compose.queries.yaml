@@ -1,0 +1,81 @@
+# Servidores de CPU de la fase 5, también disponibles como respaldo.
+x-query-model: &query-model
+  image: "${MAR_RAG_VLLM_IMAGE:-vllm/vllm-openai-cpu:v0.17.1-x86_64}"
+  profiles: [queries]
+  restart: unless-stopped
+  networks: [mar]
+  volumes:
+    - query-models:/root/.cache/huggingface
+  shm_size: 1gb
+  healthcheck:
+    test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+    interval: 10s
+    timeout: 5s
+    retries: 10
+    start_period: 10m
+
+services:
+  api:
+    environment:
+      MAR_HTTP_REQUEST_TIMEOUT: "${MAR_HTTP_REQUEST_TIMEOUT:-90s}"
+      MAR_HTTP_WRITE_TIMEOUT: "${MAR_HTTP_WRITE_TIMEOUT:-100s}"
+      MAR_MODEL_QWEN3_URL: "${MAR_MODEL_QWEN3_URL:-http://qwen3:8000}"
+      MAR_MODEL_QWEN3_GPU_URL: "${MAR_MODEL_QWEN3_GPU_URL:-}"
+      MAR_MODEL_QWEN3_NAME: "${MAR_MODEL_QWEN3_NAME:-Qwen/Qwen3-1.7B}"
+      MAR_MODEL_QWEN3_API_KEY: "${MAR_MODEL_QWEN3_API_KEY:-}"
+      MAR_MODEL_RERANKER_URL: "${MAR_MODEL_RERANKER_URL:-http://reranker:8000}"
+      MAR_MODEL_RERANKER_GPU_URL: "${MAR_MODEL_RERANKER_GPU_URL:-}"
+      MAR_MODEL_RERANKER_NAME: "${MAR_MODEL_RERANKER_NAME:-BAAI/bge-reranker-v2-m3}"
+      MAR_MODEL_RERANKER_API_KEY: "${MAR_MODEL_RERANKER_API_KEY:-}"
+      MAR_MODEL_BGE_M3_CPU_URL: "${MAR_MODEL_BGE_M3_CPU_URL:-}"
+
+  worker:
+    environment:
+      MAR_MODEL_BGE_M3_CPU_URL: "${MAR_MODEL_BGE_M3_CPU_URL:-}"
+
+  qwen3:
+    <<: *query-model
+    environment:
+      VLLM_CPU_KVCACHE_SPACE: "2"
+      VLLM_CPU_OMP_THREADS_BIND: "${MAR_RAG_CPU_BIND:-auto}"
+      OMP_NUM_THREADS: "${MAR_RAG_CPU_THREADS:-4}"
+      VLLM_NO_USAGE_STATS: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    command:
+      - "${MAR_MODEL_QWEN3_NAME:-Qwen/Qwen3-1.7B}"
+      - --enforce-eager
+      - --dtype
+      - float32
+      - --max-model-len
+      - "8192"
+      # vLLM 0.17.1 CPU falla si mezcla salidas con y sin gramática JSON en un lote.
+      - --max-num-seqs
+      - "1"
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - hermes
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking":false}'
+
+  reranker:
+    <<: *query-model
+    environment:
+      VLLM_CPU_KVCACHE_SPACE: "1"
+      VLLM_CPU_OMP_THREADS_BIND: "${MAR_RAG_CPU_BIND:-auto}"
+      OMP_NUM_THREADS: "${MAR_RAG_CPU_THREADS:-4}"
+      VLLM_NO_USAGE_STATS: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    command:
+      - "${MAR_MODEL_RERANKER_NAME:-BAAI/bge-reranker-v2-m3}"
+      - --enforce-eager
+      - --runner
+      - pooling
+      - --dtype
+      - float32
+      - --max-model-len
+      - "4096"
+
+volumes:
+  query-models:

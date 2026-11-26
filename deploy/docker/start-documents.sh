@@ -5,12 +5,19 @@ scope=$1
 shift
 compose=("$@")
 accelerator=${MAR_DOCUMENT_ACCELERATOR:-auto}
+query_accelerator=${MAR_RAG_ACCELERATOR:-$accelerator}
 timeout=${MAR_DOCUMENT_START_TIMEOUT:-600}
 
 case "$scope" in
-    all|models) ;;
+    all|models|queries) ;;
     *) printf 'Alcance de arranque desconocido: %s\n' "$scope" >&2; exit 2 ;;
 esac
+if [[ "$scope" == queries ]]; then
+    case "$query_accelerator" in
+        auto|cpu|gpu) ;;
+        *) printf 'MAR_RAG_ACCELERATOR debe ser auto, cpu o gpu.\n' >&2; exit 2 ;;
+    esac
+fi
 case "$accelerator" in
     auto|cpu|gpu) ;;
     *) printf 'MAR_DOCUMENT_ACCELERATOR debe ser auto, cpu o gpu.\n' >&2; exit 2 ;;
@@ -47,8 +54,12 @@ nvidia_tag_for() {
 
 nvidia_tag=
 nvidia_device=
-if [[ "$accelerator" != cpu ]] &&
-        { [[ "$accelerator" == gpu || "$runtime" == nvidia ]] || command -v nvidia-smi >/dev/null; }; then
+query_gpu_requested=false
+if [[ "$scope" == queries && "$query_accelerator" != cpu ]]; then
+    query_gpu_requested=true
+fi
+if { [[ "$accelerator" != cpu ]] || "$query_gpu_requested"; } &&
+        { [[ "$accelerator" == gpu || "$query_accelerator" == gpu || "$runtime" == nvidia ]] || command -v nvidia-smi >/dev/null; }; then
     probe=(docker run --rm --network none)
     if [[ "$runtime" == nvidia ]]; then
         probe+=(--runtime=nvidia)
@@ -73,8 +84,9 @@ if [[ "$accelerator" != cpu ]] &&
 fi
 
 amd_device=
-if [[ "$accelerator" != cpu && ( "$architecture" == x86_64 || "$architecture" == amd64 ) ]] &&
-        { [[ -c /dev/kfd ]] || [[ "$accelerator" == gpu ]]; }; then
+if { [[ "$accelerator" != cpu ]] || "$query_gpu_requested"; } &&
+        [[ "$architecture" == x86_64 || "$architecture" == amd64 ]] &&
+        { [[ -c /dev/kfd ]] || [[ "$accelerator" == gpu || "$query_accelerator" == gpu ]]; }; then
     # Match AMD render nodes to ROCm compute targets and prefer more VRAM.
     if amd_info=$(docker run --rm --network none --device /dev/kfd --device /dev/dri ubuntu:24.04 \
         sh -ec '
@@ -105,43 +117,52 @@ if [[ "$accelerator" != cpu && ( "$architecture" == x86_64 || "$architecture" ==
     fi
 fi
 
+if [[ -n "$amd_device" ]]; then
+    export MAR_DOCUMENT_AMD_RENDER="$amd_device"
+    export MAR_DOCUMENT_AMD_RENDER_GROUP="$amd_render_group"
+    export MAR_DOCUMENT_AMD_KFD_GROUP="$amd_kfd_group"
+    export MAR_DOCUMENT_AMD_GFX="$amd_target"
+fi
+if [[ -n "$nvidia_device" ]]; then
+    export MAR_DOCUMENT_GPU_DEVICE="$nvidia_device"
+fi
+
 if [[ "$accelerator" == gpu && -z "$nvidia_tag" && -z "$amd_device" ]]; then
     printf 'El modo gpu requiere una GPU NVIDIA o AMD compatible y visible desde Docker.\n' >&2
     exit 1
 fi
 
 build=(media)
-if [[ "$scope" == all ]]; then
+if [[ "$scope" != models ]]; then
     build+=(api)
 fi
 export MAR_BGE_M3_IMAGE="$registry:$cpu_tag"
+export MAR_BGE_M3_CPU_IMAGE="$registry:$cpu_tag"
 "${compose[@]}" build "${build[@]}"
 "${compose[@]}" up -d --wait --wait-timeout "$timeout" media
 
 selected_compose=()
+embedding_on_gpu=false
 
-if [[ -n "$nvidia_tag" ]]; then
+if [[ "$accelerator" != cpu && -n "$nvidia_tag" ]]; then
     export MAR_BGE_M3_IMAGE="$registry:$nvidia_tag"
-    export MAR_DOCUMENT_GPU_DEVICE="$nvidia_device"
     gpu_compose=("${compose[@]}" -f compose.documents.gpu.yaml)
     printf 'BGE-M3: probando GPU NVIDIA %s con %s.\n' "$nvidia_device" "$MAR_BGE_M3_IMAGE"
     if "${gpu_compose[@]}" up -d --wait --wait-timeout "$timeout" embeddings; then
         selected_compose=("${gpu_compose[@]}")
+        embedding_on_gpu=true
     else
         printf 'BGE-M3 no arrancó con NVIDIA.\n' >&2
     fi
 fi
 
-if (( ${#selected_compose[@]} == 0 )) && [[ -n "$amd_device" ]]; then
-    export MAR_DOCUMENT_AMD_RENDER="$amd_device"
-    export MAR_DOCUMENT_AMD_RENDER_GROUP="$amd_render_group"
-    export MAR_DOCUMENT_AMD_KFD_GROUP="$amd_kfd_group"
-    export MAR_DOCUMENT_AMD_GFX="$amd_target"
+if (( ${#selected_compose[@]} == 0 )) && [[ "$accelerator" != cpu && -n "$amd_device" ]]; then
     amd_compose=("${compose[@]}" -f compose.documents.amd.yaml)
     printf 'BGE-M3: probando GPU AMD %s (%s) con ROCm.\n' "$amd_device" "$amd_target"
     if "${amd_compose[@]}" build embeddings &&
         "${amd_compose[@]}" up -d --no-build --wait --wait-timeout "$timeout" embeddings; then
         selected_compose=("${amd_compose[@]}")
+        embedding_on_gpu=true
     else
         printf 'BGE-M3 no arrancó con AMD ROCm.\n' >&2
     fi
@@ -158,6 +179,12 @@ if (( ${#selected_compose[@]} == 0 )); then
     "${selected_compose[@]}" up -d --wait --wait-timeout "$timeout" embeddings
 fi
 
-if [[ "$scope" == all ]]; then
+if [[ "$scope" == queries ]]; then
+    # shellcheck source=deploy/docker/start-query-models.sh
+    source "$(dirname "${BASH_SOURCE[0]}")/start-query-models.sh"
+    start_query_models
+fi
+
+if [[ "$scope" != models ]]; then
     "${selected_compose[@]}" up -d --wait --wait-timeout "$timeout"
 fi
