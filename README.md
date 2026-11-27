@@ -11,7 +11,7 @@ context-aware responses through a scalable and modular architecture.
 
 ## Development Status
 
-**Last updated:** November 25, 2026
+**Last updated:** November 27, 2026
 
 | Phase | Description | Status |
 |:---:|---|---|
@@ -19,9 +19,14 @@ context-aware responses through a scalable and modular architecture.
 | 2 | Persistence and Storage | ✅ Completed |
 | 3 | Data Ingestion and Asynchronous Processing | ✅ Completed |
 | 4 | Document Processing and AI | ✅ Completed |
-| 5 | Agentic RAG | ✅ Implemented for documents |
+| 5 | Agentic RAG for documents | ✅ Completed |
 | 6 | Multimodal Processing | ⏳ Pending |
 | 7 | Evolution Towards Microservices | ⏳ Pending |
+
+The document workflow runs from asynchronous upload and indexing to semantic
+search and answers with source citations. Queries return `insufficient_evidence`
+when indexed passages do not support an answer. See [Phase 5 document
+queries](#phase-5-document-queries) to try it locally.
 
 ## Local development
 
@@ -435,10 +440,13 @@ make up-queries
 make queries-ps
 ```
 
-The phase 5 Compose overlay starts Qwen3-1.7B and BGE Reranker v2 M3 on CPU
-using vLLM. Their first startup downloads model weights. BGE-M3 uses the
-accelerator chosen by the existing phase 4 startup script. The two new model
-servers are reachable only on the Compose network.
+`make up-queries` starts Qwen3-1.7B and BGE Reranker v2 M3 using vLLM. It
+prefers a compatible NVIDIA or AMD GPU with enough available memory and keeps
+CPU servers ready as a fallback. Set `MAR_RAG_ACCELERATOR=cpu` to run Qwen3
+and the reranker on CPU, or `MAR_RAG_ACCELERATOR=gpu` to require both to start
+on GPU. BGE-M3 uses the accelerator chosen by the phase 4 startup script.
+The first startup downloads model weights. The model servers are reachable
+only on the Compose network.
 
 In Postman, send `POST http://localhost:18082/v1/queries` with the same
 `X-Tenant-ID` used to upload the PDF and select **Body → raw → JSON**.
