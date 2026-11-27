@@ -1,0 +1,289 @@
+{
+	"info": {
+		"_postman_id": "704c8f62-fddc-4b7f-8b6d-d62c3370b5e8",
+		"name": "MAR",
+		"description": "### Welcome to Postman! This is your first collection. \n\nCollections are your starting point for building and testing APIs. You can use this one to:\n\n• Group related requests\n• Test your API in real-world scenarios\n• Document and share your requests\n\nUpdate the name and overview whenever you’re ready to make it yours.\n\n[Learn more about Postman Collections.](https://learning.postman.com/docs/collections/collections-overview/)",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "60416932",
+		"_collection_link": "https://inn-ehernandezz-9248820.postman.co/workspace/Endika-Hernandez's-Workspace~100fcf82-caa2-44d4-82e3-1b01837eb22d/collection/60416932-704c8f62-fddc-4b7f-8b6d-d62c3370b5e8?action=share&source=collection_link&creator=60416932"
+	},
+	"item": [
+		{
+			"name": "/health/ready",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:18082/health/ready",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "18082",
+					"path": [
+						"health",
+						"ready"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/health/live",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:18082/health/live",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "18082",
+					"path": [
+						"health",
+						"live"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/v1/resources",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "X-Tenant-ID",
+						"value": "demo-2",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "file",
+							"type": "file",
+							"src": "/home/ehernandez/Documentos/Proyectos/mar-backend/tmp/mar-documentos-1BcskW/inventario.csv"
+						}
+					]
+				},
+				"url": {
+					"raw": "http://localhost:18082/v1/resources",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "18082",
+					"path": [
+						"v1",
+						"resources"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/v1/resources/{id}",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "X-Tenant-ID",
+						"value": "demo",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "http://localhost:18082/v1/resources/90ee340c-745c-53a9-a317-28c0fa0d5517",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "18082",
+					"path": [
+						"v1",
+						"resources",
+						"90ee340c-745c-53a9-a317-28c0fa0d5517"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/v1/resources/{id}/index",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "X-Tenant-ID",
+						"value": "demo",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "http://localhost:18082/v1/resources/90ee340c-745c-53a9-a317-28c0fa0d5517/index",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "18082",
+					"path": [
+						"v1",
+						"resources",
+						"90ee340c-745c-53a9-a317-28c0fa0d5517",
+						"index"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/v1/jobs/{id}",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "X-Tenant-ID",
+						"value": "demo-embe",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "http://localhost:18082/v1/jobs/46bd0cd5-007a-5f0a-b9db-58dea967f950",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "18082",
+					"path": [
+						"v1",
+						"jobs",
+						"46bd0cd5-007a-5f0a-b9db-58dea967f950"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/v1/jobs/{id}/cancel",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "X-Tenant-ID",
+						"value": "demo",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "http://localhost:18082/v1/jobs/4e15f3f1-cf04-5d94-a045-a84308bbd031/cancel",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "18082",
+					"path": [
+						"v1",
+						"jobs",
+						"4e15f3f1-cf04-5d94-a045-a84308bbd031",
+						"cancel"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/v1/queries",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "X-Tenant-ID",
+						"value": "demo",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "http://localhost:18082/v1/queries",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "18082",
+					"path": [
+						"v1",
+						"queries"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/v1/search",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "X-Tenant-ID",
+						"value": "demo-2",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"query\": \"y los domingos a que hora abre?\",\n  \"limit\": 5,\n  \"resource_id\": \"d14a6e51-1862-5645-a9e2-19179e674951\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:18082/v1/search",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "18082",
+					"path": [
+						"v1",
+						"search"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/text_embeddings/points",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"ids\": [\"00bbb552-1250-59fa-8e16-8add08d40173\"],\n  \"with_vector\": true,\n  \"with_payload\": false\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:6333/collections/text_embeddings/points",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "6333",
+					"path": [
+						"collections",
+						"text_embeddings",
+						"points"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

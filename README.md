@@ -30,22 +30,119 @@ queries](#phase-5-document-queries) to try it locally.
 
 ## Local development
 
-Run these commands from the repository root. The Docker-based setup requires Docker with
-the Compose plugin. The local defaults use Azurite. You can run the API without
-an Azure account or an `.env` file. Enable the Service Bus emulator and the
-Go worker to try the asynchronous ingestion flow.
+Run these commands in Bash from the root of the `dev` checkout. Docker builds
+and runs the Go API and worker, Docling and Tesseract, Qdrant, the Azure
+emulators and SQL Server, and the model servers. The Docker setup uses local
+emulators, so it needs no Azure account or subscription.
 
-### Run everything in Docker
+### Prerequisites
+
+- A running Docker engine and the Docker Compose plugin with `up --wait`
+  support. Run `docker info` and `docker compose version` to verify access.
+  If you use more than one Docker engine, check `docker context ls` and use
+  the same context for startup, logs and shutdown. On a Linux machine using
+  Docker Engine for GPU access, select that engine with
+  `export DOCKER_CONTEXT=default` if needed.
+- Bash and GNU Make for the `make` commands. Install `curl` and `jq` to run
+  the API examples. Go and Python are only needed on the host for the
+  host-development and test commands below.
+- Use a Linux x86-64 Docker engine for the full stack. The default vLLM CPU
+  image targets x86-64 and the Service Bus emulator uses SQL Server. Even
+  with GPU acceleration, the query stack starts CPU model servers as a
+  fallback, so allocate memory for them as well. [vLLM CPU requirements](https://docs.vllm.ai/en/v0.17.1/getting_started/installation/cpu/) ·
+  [SQL Server Docker requirements](https://learn.microsoft.com/en-us/sql/linux/quickstart-install-connect-docker?view=sql-server-ver17)
+- Allow network access for the first run to download container images, build
+  dependencies and Hugging Face model weights. Leave room in Docker storage
+  for the images and model caches. The first build and startup can take
+  several minutes. GPU images increase disk usage, especially on AMD.
+
+### Quick start for document queries
+
+Create or edit `.env` in the repository root. After reviewing the
+[Service Bus emulator and SQL Server license terms](https://learn.microsoft.com/en-us/azure/service-bus-messaging/test-locally-with-service-bus-emulator),
+set `MAR_EMULATOR_ACCEPT_EULA=Y` and replace the password placeholder with a
+local password. SQL Server requires at least eight characters and characters
+from at least three categories among uppercase letters, lowercase letters,
+digits and symbols. [SQL Server password policy](https://learn.microsoft.com/en-us/sql/linux/quickstart-install-connect-docker?view=sql-server-ver17)
+
+```dotenv
+MAR_EMULATOR_ACCEPT_EULA=Y
+MAR_EMULATOR_SQL_PASSWORD='replace-with-your-local-password'
+MAR_DOCKER_HTTP_PORT=8080
+```
+
+The following commands start the full stack and verify the API and message broker.
+
+```bash
+make up-queries
+make queries-ps
+BASE=http://localhost:8080
+curl -fsS "$BASE/health/ready" | jq .
+curl -fsS --retry 30 --retry-connrefused --retry-delay 2 http://localhost:5300/health
+```
+
+Use the port from `MAR_DOCKER_HTTP_PORT` in `BASE` if you changed it. The
+API readiness endpoint checks Blob, Table and Qdrant. Use `make queries-ps`
+to check the model containers and the separate `/health` call on port `5300`
+to check the Service Bus emulator. The emulator can return `503` while its
+SQL Server initializes. The command retries during that window. See the
+[host ports](#host-ports) below if Docker reports an address already in use.
+
+`make up-queries` selects a compatible GPU automatically when available. To
+use CPU for every model, run `MAR_DOCUMENT_ACCELERATOR=cpu MAR_RAG_ACCELERATOR=cpu make up-queries`.
+For a slow first model download, increase the per-service wait, for example
+with `MAR_DOCUMENT_START_TIMEOUT=1200 make up-queries`.
+
+#### Try an upload and a question
+
+Keep the same Bash terminal so `BASE`, `TENANT` and the returned IDs are
+available. The following commands create and upload a small text document.
+
+```bash
+TENANT=mar-demo
+DEMO_DIR=$(mktemp -d)
+printf 'The daily travel meal allowance is 55 euros.\n' > "$DEMO_DIR/allowance.txt"
+
+submission=$(curl -fsS -H "X-Tenant-ID: $TENANT" \
+  -F "file=@$DEMO_DIR/allowance.txt" "$BASE/v1/resources")
+printf '%s\n' "$submission" | jq .
+JOB_ID=$(jq -er .job_id <<<"$submission")
+RESOURCE_ID=$(jq -er .resource_id <<<"$submission")
+```
+
+Use the following request to check the job. Repeat it until `status` is
+`COMPLETED` and `stage` is `document_indexed`. If it reaches `FAILED`, inspect
+`error_code` and `error_message` before continuing.
+
+```bash
+curl -fsS -H "X-Tenant-ID: $TENANT" "$BASE/v1/jobs/$JOB_ID" | jq .
+```
+
+This request asks a question scoped to that document.
+
+```bash
+question=$(jq -nc --arg id "$RESOURCE_ID" \
+  '{query:"What is the daily travel meal allowance?",resource_id:$id}')
+curl -fsS -H "X-Tenant-ID: $TENANT" -H 'Content-Type: application/json' \
+  -d "$question" "$BASE/v1/queries" | jq .
+```
+
+Look for `status: answered`, the amount and a citation in `sources`. In
+Postman, use the same URL and `X-Tenant-ID` header and paste the JSON printed
+by `printf '%s\n' "$question"` into **Body → raw → JSON**. Use
+`make stop-queries` to stop the stack while keeping its data.
+
+### Run only the API and storage in Docker
 
 ```bash
 docker compose --profile app up -d --build
 docker compose --profile app ps
 ```
 
-This builds the Go API and starts it alongside Qdrant and Azurite. If you have
-Make installed, `make up-full` does the same. The API is available at
-`http://localhost:8080`. Set `MAR_DOCKER_HTTP_PORT=18080` if the default port
-is occupied.
+This builds the Go API and starts it alongside Qdrant and Azurite. The same
+setup is available through `make up-full` and needs no `.env` file. The API
+is available at `http://localhost:8080`. Set `MAR_DOCKER_HTTP_PORT=18080` if
+the default port is occupied.
 
 ```bash
 docker compose --profile app logs -f api  # Follow API logs
@@ -69,11 +166,18 @@ below. If Qdrant or Azurite is already running on the default ports, reuse
 the existing service. For example, with Qdrant already running, start only
 Azurite with `docker compose up -d azurite` before running the API.
 
+### Host ports
+
 | Service | Host ports |
 |---|---|
-| MAR API | `8080` (HTTP) |
+| MAR API | `8080` (HTTP, configurable with `MAR_DOCKER_HTTP_PORT` for Docker or `MAR_HTTP_ADDR` for `make run`) |
 | Qdrant | `6333` (REST and dashboard), `6334` (gRPC) |
 | Azurite | `10000` (Blob), `10001` (Queue), `10002` (Table) |
+| Service Bus emulator | `5672` (AMQP), `5300` (health), both bound to loopback |
+
+The full stack starts its own Qdrant and Azurite containers. Their host ports
+must be available. Docling, BGE-M3, vLLM and the emulator's SQL Server listen
+on the Compose network.
 
 Use `docker compose stop` to stop just the infrastructure. `docker compose
 down` removes the containers. Qdrant data is kept in a named volume, while
@@ -81,13 +185,14 @@ Azurite has no persistent volume in this setup.
 
 ### Verify the API and storage
 
-With the API running, open a separate terminal and run:
+With the API running, open a separate terminal and use its configured port.
 
 ```bash
-curl -i http://localhost:8080/health/live
-curl -i http://localhost:8080/health/ready
-curl -i http://localhost:8080/v1/jobs/demo
-curl -i -H 'X-Tenant-ID: demo' http://localhost:8080/v1/jobs/demo
+BASE=http://localhost:8080
+curl -i "$BASE/health/live"
+curl -i "$BASE/health/ready"
+curl -i "$BASE/v1/jobs/demo"
+curl -i -H 'X-Tenant-ID: demo' "$BASE/v1/jobs/demo"
 curl -fsS http://localhost:6333/collections/text_embeddings
 ```
 
@@ -106,27 +211,17 @@ is unset.
 
 ### Run asynchronous ingestion
 
-For the complete local ingestion flow, create a local `.env` with the
-settings below. Set `MAR_EMULATOR_ACCEPT_EULA=Y` after reviewing the
-[emulator and SQL Server license terms](https://learn.microsoft.com/en-us/azure/service-bus-messaging/test-locally-with-service-bus-emulator).
-Use your own strong password for the emulator's SQL Server.
-
-```dotenv
-MAR_EMULATOR_ACCEPT_EULA=Y
-MAR_EMULATOR_SQL_PASSWORD='replace-with-a-strong-local-password'
-```
-
-Start the API, the Go worker, and all dependencies:
+Use the [quick start `.env` settings](#quick-start-for-document-queries).
+The following commands start the API, the Go worker and the storage and
+messaging dependencies for ingestion.
 
 ```bash
 make up-ingestion
 make ps
-curl -fsS http://localhost:5300/health
+curl -fsS --retry 30 --retry-connrefused --retry-delay 2 http://localhost:5300/health
 ```
 
-Service Bus uses port `5672` for AMQP and `5300` for emulator health. The
-queue `ingestion` is preconfigured locally. `make up-ingestion` starts the
-Compose Qdrant on ports `6333` and `6334`, which must be free.
+The queue `ingestion` is preconfigured locally.
 Run `docker compose --profile app --profile messaging stop` to stop the
 stack and keep its containers.
 
@@ -153,8 +248,9 @@ enabled.
 Create a file with `printf 'MAR ingestion test\n' > example.txt` and run:
 
 ```bash
+BASE=http://localhost:8080
 curl -i -H 'X-Tenant-ID: demo' -H 'Idempotency-Key: first-upload' \
-  -F 'file=@example.txt' http://localhost:8080/v1/resources
+  -F 'file=@example.txt' "$BASE/v1/resources"
 ```
 
 The response is `202 Accepted` with `resource_id`, `job_id`, and `status`.
@@ -163,9 +259,9 @@ Copy the IDs to inspect the metadata and job status:
 ```bash
 resource_id='replace-with-resource-id'
 job_id='replace-with-job-id'
-curl -i -H 'X-Tenant-ID: demo' "http://localhost:8080/v1/resources/$resource_id"
-curl -i -H 'X-Tenant-ID: demo' "http://localhost:8080/v1/jobs/$job_id"
-curl -i -X POST -H 'X-Tenant-ID: demo' "http://localhost:8080/v1/jobs/$job_id/cancel"
+curl -i -H 'X-Tenant-ID: demo' "$BASE/v1/resources/$resource_id"
+curl -i -H 'X-Tenant-ID: demo' "$BASE/v1/jobs/$job_id"
+curl -i -X POST -H 'X-Tenant-ID: demo' "$BASE/v1/jobs/$job_id/cancel"
 ```
 
 Cancellation returns `409` if the job has already completed or failed. To try cancellation
@@ -202,9 +298,8 @@ copy of the model weights. Later starts reuse the image layers and weights.
 
 `make up-documents` waits for the extractor and BGE-M3 to be healthy before
 bringing up the full stack. The extraction and embedding services listen on
-the Compose network. Use the API port from your `.env` (port `18082` in the
-current local setup). See the [startup commands](#phase-4-startup-commands)
-at the end of this README.
+the Compose network. See the [startup commands](#phase-4-startup-commands)
+for status and logs.
 
 #### Upload, check the job and search
 
@@ -214,7 +309,7 @@ Use a different idempotency key for a separate upload. The extractor accepts
 up to 200 PDF pages, 100,000 XLSX cells and 3,000 fragments per document.
 
 ```bash
-BASE=http://localhost:18082
+BASE=http://localhost:8080
 FILE=/path/to/document.pdf
 TENANT=demo-fase4
 
@@ -227,17 +322,21 @@ RESOURCE_ID=$(jq -r .resource_id <<<"$submission")
 
 curl -fsS -H "X-Tenant-ID: $TENANT" "$BASE/v1/jobs/$JOB_ID" | jq .
 curl -fsS -H "X-Tenant-ID: $TENANT" "$BASE/v1/resources/$RESOURCE_ID" | jq .
+```
 
+Repeat the job request until it reaches `COMPLETED` with
+`stage: document_indexed` and `progress: 100`. The resource should then be
+`PROCESSED`. Set `query` to a question relevant to your document.
+
+```bash
 query=$(jq -nc --arg id "$RESOURCE_ID" \
   '{query:"¿Cuánto me pagan por comer durante un viaje?",limit:5,resource_id:$id}')
 curl -fsS -H "X-Tenant-ID: $TENANT" -H 'Content-Type: application/json' \
   -d "$query" "$BASE/v1/search" | jq .
 ```
 
-Run the job query again until it reaches `COMPLETED` with
-`stage: document_indexed` and `progress: 100`. The resource should then be
-`PROCESSED`. Change `query` to match your document. Search returns passages
-and their source references. A PDF hit can include `page`, `pages` for a multi-page block, and `section`,
+Search returns passages and their source references. A PDF hit can include
+`page`, `pages` for a multi-page block, and `section`,
 while an Excel hit includes `sheet` and `cells`. The optional `resource_id`
 narrows the search to one document. Using a different `X-Tenant-ID` returns
 no results for that document.
@@ -255,12 +354,13 @@ Use the new `job_id` when polling. A repeat with the same key returns the
 same job. A new job for the same original can reuse the stored extraction
 and embedding batches.
 
-See the [failure drills](#phase-4-failure-drills) at the end of this README.
+See the [failure drills](#phase-4-failure-drills) to test retries and recovery.
 
 ### Run the tests
 
-With Go and Make installed, start Qdrant and Azurite before running the tests.
-The storage tests connect directly to those services.
+With Go and Make installed, run `make up` and wait for Qdrant and Azurite to
+be healthy. The storage tests connect directly to those services. `make race`
+also needs a C compiler on the host.
 
 ```bash
 make build
@@ -270,11 +370,11 @@ go test -count=1 -v ./internal/platform/httpapi ./internal/storage/...
 make race
 ```
 
-Run `python3 -m unittest discover -s workers/media` for the Python fragment
-and provenance tests.
+Use Python 3.12, as in the worker image, to run
+`python3 -m unittest discover -s workers/media` for the fragment and provenance tests.
 
-Check the verbose output for `SKIP` to confirm that the ingestion and storage
-integration tests ran. They skip when their dependencies are unreachable.
+Check the verbose output for `SKIP`. It marks the ingestion and storage
+integration tests that could not reach their dependencies.
 
 ## Phase 4 startup commands
 
@@ -307,17 +407,18 @@ docker compose -f compose.yaml -f compose.documents.yaml \
   --profile app --profile messaging --profile documents up -d --build api worker
 ```
 
-Check the API and all configured storage dependencies:
+Check the API and its storage dependencies.
 
 ```bash
-BASE=http://localhost:18082
+BASE=http://localhost:8080
 curl -fsS "$BASE/health/ready"
 ```
 
-### Stop all MAR services
+### Stop the document-processing stack
 
 From the repository root, stop the API, Go worker, document extractor,
-BGE-M3, Qdrant, Azurite, Service Bus and its SQL Server with:
+BGE-M3, Qdrant, Azurite, Service Bus and its SQL Server with the commands below.
+If you started Phase 5, use `make stop-queries` to include its model servers.
 
 ```bash
 make stop-documents
@@ -341,7 +442,7 @@ in Bash. Each `submit` creates a new test resource so it starts with fresh
 checkpoints.
 
 ```bash
-BASE=http://localhost:18082
+BASE=http://localhost:8080
 TENANT=demo-fallos
 phase4=(docker compose -f compose.yaml -f compose.documents.yaml \
   --profile app --profile messaging --profile documents)
@@ -432,13 +533,8 @@ request allows up to two tool calls during evidence retrieval. MAR checks
 each selected quotation against the indexed text and verifies whether the
 quotations answer the exact question before asking Qwen3 to write a response.
 
-On a local x86-64 machine, run these commands from the repository root:
-
-```bash
-export DOCKER_CONTEXT=default
-make up-queries
-make queries-ps
-```
+Follow the [quick start](#quick-start-for-document-queries) to configure the
+emulator and run an upload through the full query stack.
 
 `make up-queries` starts Qwen3-1.7B and BGE Reranker v2 M3 using vLLM. It
 prefers a compatible NVIDIA or AMD GPU with enough available memory and keeps
@@ -448,23 +544,21 @@ on GPU. BGE-M3 uses the accelerator chosen by the phase 4 startup script.
 The first startup downloads model weights. The model servers are reachable
 only on the Compose network.
 
-In Postman, send `POST http://localhost:18082/v1/queries` with the same
-`X-Tenant-ID` used to upload the PDF and select **Body → raw → JSON**.
-Replace the example UUID with the real `resource_id`:
+The response includes `status`, `answer` and `sources`. Ask for a detail that
+is absent from the document to check the `insufficient_evidence` response
+with an empty source list. Omit `resource_id` to query across the tenant's
+indexed documents.
 
-```json
-{
-  "query": "¿Qué pasa si borro los originales y luego quiero rehacer el índice?",
-  "resource_id": "1bdd98eb-fe02-5078-87d6-a32d52a2d44d"
-}
+Run `make queries-ps` to see model health and `make documents-logs` to see
+API, worker, extractor and BGE-M3 logs. For the broker and the query models,
+run the following command in the same Docker context as startup.
+
+```bash
+docker compose -f compose.yaml -f compose.documents.yaml -f compose.queries.yaml \
+  -f compose.queries.gpu.yaml --profile app --profile messaging --profile documents \
+  --profile queries --profile query-gpu logs --tail=100 \
+  servicebus servicebus-db qwen3 reranker qwen3-gpu reranker-gpu
 ```
-
-The response includes `status`, `answer` and `sources`. For the MAR
-architecture proposal, check that the answer explains that the original
-files must be requested again, and confirm the citation in the PDF. Ask
-how much the deployment costs per month to check the
-`insufficient_evidence` response with an empty source list.
-Omit `resource_id` to query across the tenant's indexed documents.
 
 For an API running directly on the host or in a custom deployment, set
 `MAR_MODEL_QWEN3_URL` and `MAR_MODEL_RERANKER_URL` to the base URLs of the
